@@ -1,0 +1,61 @@
+{
+  "name": "dispose-me-cf",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dispose Me - Cloudflare: self-hosted disposable email on Workers, Email Routing, D1, and R2.",
+  "author": "Kamil Dybicz",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kdybicz/dispose-me-cf.git"
+  },
+  "engines": {
+    "node": ">=24.0.0 <25.0.0",
+    "yarn": ">=4.18.1"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -i ./service/assets/css/styles.css -o ./service/assets/css/output.css --minify",
+    "build": "yarn build:css && node cloudflare/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "check:worker": "yarn typecheck && wrangler deploy --dry-run",
+    "dev": "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false wrangler dev --test-scheduled",
+    "migrate:local": "wrangler d1 migrations apply DB --local",
+    "deploy": "node cloudflare/deployment.mjs deploy",
+    "config": "node cloudflare/deployment.mjs configure",
+    "infra": "node cloudflare/deployment.mjs infra",
+    "state:bootstrap": "node cloudflare/terraform-state.mjs",
+    "check:infra": "node cloudflare/terraform-check.mjs",
+    "test:deployment": "node --test cloudflare/deployment.test.mjs cloudflare/terraform-state.test.mjs",
+    "test:unit": "tsx --test test/*.test.ts",
+    "test:integration": "yarn build && node cloudflare/smoke.mjs",
+    "test": "yarn test:unit && yarn test:deployment && yarn test:integration",
+    "lint": "biome check service cloudflare test",
+    "format": "biome check --write service cloudflare test",
+    "audit": "yarn npm audit --recursive --severity high"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.23",
+    "express": "^5.2.1",
+    "express-validator": "^7.3.2",
+    "feed": "^4.2.2",
+    "helmet": "^8.3.0",
+    "postal-mime": "^4.0.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "@tailwindcss/cli": "^4.3.3",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.19.1",
+    "aws4fetch": "^1.0.20",
+    "ejs": "^6.0.1",
+    "glob": "^13.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "wrangler": "^4.148.0"
+  },
+  "resolutions": {
+    "miniflare@npm:5.20261006.0-alpha/sharp": "npm:0.35.5"
+  },
+  "packageManager": "yarn@4.18.1"
+}

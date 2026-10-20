@@ -1,0 +1,502 @@
+import type { Buffer } from 'node:buffer';
+
+import dayjs = require('dayjs');
+
+import type { Request, Response } from 'express';
+import { matchedData, type ValidationError, validationResult } from 'express-validator';
+import type { EmailDatabase } from '../../cloudflare/EmailDatabase';
+import type { EmailParser, ParsedEmail } from '../../cloudflare/EmailParser';
+import { getCookieMaxAgeMs } from '../tools/config';
+import { AUTH_COOKIE_KEY, AUTH_QUERY_KEY, REMEMBER_COOKIE_KEY } from '../tools/const';
+import { mapEmailDetailsListToFeed } from '../tools/feed';
+import log from '../tools/log';
+import { getCookie, getToken, normalizeUsername } from '../tools/utils';
+import { TYPE_DEFAULT } from '../tools/validators';
+
+export interface InboxListParams extends Record<string, string> {
+  username: string;
+}
+
+export interface InboxEmailParams extends InboxListParams {
+  id: string;
+}
+
+export interface InboxQuery extends Record<string, undefined | string> {
+  limit?: string;
+  sendAfter?: string;
+  type?: 'html' | 'json';
+  [AUTH_QUERY_KEY]?: string;
+}
+
+export interface InboxAuthBody {
+  token: string;
+  remember: string;
+}
+
+export interface InboxRequest<P = Record<string, string>, B = unknown>
+  extends Request<P, unknown, B, InboxQuery> {}
+
+// biome-ignore lint/suspicious/noConfusingVoidType: Express route handler may return void
+export type InboxResponse = Promise<Response<unknown> | void>;
+
+export type EmailListItem = {
+  id: string;
+  from: string;
+  subject: string;
+  received: Date;
+  hasAttachments: boolean;
+};
+
+export type EmailDetails = ParsedEmail & {
+  id: string;
+};
+
+export interface InboxDependencies {
+  emailDatabase: Pick<EmailDatabase, 'list' | 'exists' | 'delete'>;
+  emailParser: Pick<EmailParser, 'parseEmail'>;
+  fileSystem: {
+    getObject(id: string): Promise<Buffer>;
+    getObjects(ids: string[]): Promise<Buffer[]>;
+  };
+}
+
+export class InboxController {
+  protected emailDatabase: InboxDependencies['emailDatabase'];
+  protected emailParser: InboxDependencies['emailParser'];
+  protected fileSystem: InboxDependencies['fileSystem'];
+
+  constructor(dependencies: InboxDependencies) {
+    this.emailDatabase = dependencies.emailDatabase;
+    this.emailParser = dependencies.emailParser;
+    this.fileSystem = dependencies.fileSystem;
+  }
+
+  index = async (req: InboxRequest, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'index' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const { type = TYPE_DEFAULT } = matchedData<{ type?: string }>(req);
+
+    const token = getCookie(req, AUTH_COOKIE_KEY);
+    if (token) {
+      return res.redirect('/inbox');
+    }
+
+    if (type === 'html') {
+      return res.render('pages/index');
+    }
+
+    return res.json({});
+  };
+
+  auth = async (
+    req: InboxRequest<Record<string, never>, InboxAuthBody>,
+    res: Response,
+  ): InboxResponse => {
+    log.debug(
+      `Action: 'auth' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(422).render('pages/index', { errors: errors.array() });
+    }
+
+    const { token, remember } = matchedData<{ token: string; remember: boolean }>(req);
+
+    let maxAge: number | undefined;
+    if (remember) {
+      maxAge = getCookieMaxAgeMs();
+
+      res.cookie(REMEMBER_COOKIE_KEY, true, {
+        secure: true,
+        httpOnly: true,
+        sameSite: 'strict',
+        maxAge,
+      });
+    }
+
+    res.cookie(AUTH_COOKIE_KEY, token, {
+      secure: true,
+      httpOnly: true,
+      sameSite: 'strict',
+      maxAge,
+    });
+
+    return res.redirect('/inbox');
+  };
+
+  async logout(_req: Request, res: Response): InboxResponse {
+    res.clearCookie(AUTH_COOKIE_KEY);
+    res.clearCookie(REMEMBER_COOKIE_KEY);
+    return res.redirect('/');
+  }
+
+  show = async (req: InboxRequest<InboxEmailParams>, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'show' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return this.render422Response(errors.array(), req, res);
+    }
+
+    const {
+      id,
+      type = TYPE_DEFAULT,
+      username,
+    } = matchedData<{ id: string; type?: string; username: string }>(req);
+
+    let email: EmailDetails | undefined;
+
+    const normalizedUsername = normalizeUsername(username);
+    const existsForUser = await this.emailDatabase.exists(normalizedUsername, id);
+    if (existsForUser) {
+      const emailBody = await this.fileSystem.getObject(id);
+
+      if (!emailBody) {
+        return this.render500Response(new Error('Email content not found!'), req, res);
+      }
+
+      const parsedEmail = await this.emailParser.parseEmail(emailBody);
+      email = {
+        ...parsedEmail,
+        id,
+        attachments: parsedEmail.attachments.map((attachment) => ({
+          ...attachment,
+          content: undefined,
+        })),
+      };
+
+      if (type === 'html') {
+        const token = getToken(req);
+        return res.render('pages/email', { email, token });
+      }
+
+      return res.json({ email });
+    }
+
+    return this.render404Response(req, res);
+  };
+
+  download = async (req: InboxRequest<InboxEmailParams>, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'download' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return this.render422Response(errors.array(), req, res);
+    }
+
+    const { id, username } = matchedData<{ id: string; username: string }>(req);
+
+    const normalizedUsername = normalizeUsername(username);
+    const existsForUser = await this.emailDatabase.exists(normalizedUsername, id);
+    if (existsForUser) {
+      const emailBody = await this.fileSystem.getObject(id);
+
+      if (!emailBody) {
+        return this.render500Response(new Error('Email content not found!'), req, res);
+      }
+
+      res.attachment(`${id}.eml`);
+      res.type('application/octet-stream');
+
+      return res.send(emailBody);
+    }
+
+    return this.render404Response(req, res);
+  };
+
+  downloadAttachment = async (
+    req: InboxRequest<InboxEmailParams>,
+    res: Response,
+  ): InboxResponse => {
+    log.debug(
+      `Action: 'download attachment' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return this.render422Response(errors.array(), req, res);
+    }
+
+    const { id, username, filename } = matchedData<{
+      id: string;
+      username: string;
+      filename: string;
+    }>(req);
+
+    const normalizedUsername = normalizeUsername(username);
+    const existsForUser = await this.emailDatabase.exists(normalizedUsername, id);
+    if (existsForUser) {
+      const emailBody = await this.fileSystem.getObject(id);
+
+      if (!emailBody) {
+        return this.render500Response(new Error('Email content not found!'), req, res);
+      }
+
+      const parsedEmail = await this.emailParser.parseEmail(emailBody);
+      const attachment = parsedEmail.attachments.find(
+        (attachment) => attachment.filename === filename,
+      );
+
+      if (!attachment) {
+        return this.render500Response(new Error('Email attachment not found!'), req, res);
+      }
+
+      res.attachment(attachment.filename);
+      res.type(attachment.contentType);
+
+      return res.send(attachment.content);
+    }
+
+    return this.render404Response(req, res);
+  };
+
+  delete = async (req: InboxRequest<InboxEmailParams>, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'delete' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return this.render422Response(errors.array(), req, res);
+    }
+
+    const { id, username } = matchedData<{ id: string; username: string }>(req);
+
+    const normalizedUsername = normalizeUsername(username);
+    const deletedFromDatabase = await this.emailDatabase.delete(normalizedUsername, id);
+    if (deletedFromDatabase) {
+      if (req.method === 'DELETE') {
+        return res.status(204).end();
+      }
+
+      return res.redirect(
+        `/inbox/${username}?${new URLSearchParams(req.query as Record<string, string>)}`,
+      );
+    }
+
+    return this.render404Response(req, res);
+  };
+
+  latest = async (req: InboxRequest<InboxListParams>, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'latest' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return this.render422Response(errors.array(), req, res);
+    }
+
+    const {
+      sentAfter,
+      type = TYPE_DEFAULT,
+      username,
+    } = matchedData<{
+      sentAfter?: number;
+      type?: string;
+      username: string;
+    }>(req);
+
+    let email: EmailDetails | undefined;
+
+    const normalizedUsername = normalizeUsername(username);
+    const latestEmail = await this.emailDatabase.list(normalizedUsername, sentAfter, 1);
+    if (latestEmail.Items && latestEmail.Items.length > 0) {
+      const messageId = latestEmail.Items[0].Id;
+      const emailBody = await this.fileSystem.getObject(messageId);
+
+      if (emailBody) {
+        const parsedEmail = await this.emailParser.parseEmail(emailBody);
+        email = {
+          ...parsedEmail,
+          id: messageId,
+          attachments: parsedEmail.attachments.map((attachment) => ({
+            ...attachment,
+            content: undefined,
+          })),
+        };
+      }
+    }
+
+    if (type === 'html') {
+      const token = getToken(req);
+      return res.render('pages/email', { email, token });
+    }
+
+    return res.json({ email });
+  };
+
+  inbox = async (req: InboxRequest, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'inbox' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const { type = TYPE_DEFAULT } = matchedData<{ type?: string }>(req);
+
+    if (type === 'html') {
+      return res.render('pages/inbox');
+    }
+
+    return res.json({});
+  };
+
+  list = async (req: InboxRequest<InboxListParams>, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'list' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return this.render422Response(errors.array(), req, res, 'pages/inbox');
+    }
+
+    const {
+      limit,
+      sentAfter,
+      type = TYPE_DEFAULT,
+      username,
+    } = matchedData<{
+      limit?: number;
+      sentAfter?: number;
+      type?: string;
+      username: string;
+    }>(req);
+
+    const normalizedUsername = normalizeUsername(username);
+    const emailObjectList = await this.emailDatabase.list(normalizedUsername, sentAfter, limit);
+
+    const emails = (emailObjectList.Items ?? []).map<EmailListItem>((emailObject) => ({
+      id: emailObject.Id,
+      from: emailObject.Sender,
+      subject: emailObject.Subject,
+      received: dayjs.unix(emailObject.ReceivedAt).toDate(),
+      hasAttachments: emailObject.HasAttachments,
+    }));
+
+    if (type === 'html') {
+      const token = getToken(req);
+      return res.render('pages/list', { emails, token });
+    }
+
+    return res.json({ emails });
+  };
+
+  listRss = async (req: InboxRequest<InboxListParams>, res: Response): InboxResponse => {
+    log.debug(
+      `Action: 'listRss' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return this.render422Response(errors.array(), req, res);
+    }
+
+    const { username } = matchedData<{ username: string }>(req);
+
+    const normalizedUsername = normalizeUsername(username);
+    const emailList = await this.emailDatabase.list(normalizedUsername);
+
+    const emailNamesList = emailList.Items?.map((item) => item.Id) ?? [];
+    const emailBodies = await this.fileSystem.getObjects(emailNamesList);
+    const emails = await Promise.all(
+      emailBodies.map(async (emailBody, idx) => {
+        if (emailBody) {
+          const parsedEmail = await this.emailParser.parseEmail(emailBody);
+          if (parsedEmail) {
+            return {
+              ...parsedEmail,
+              id: emailNamesList[idx],
+            };
+          }
+        }
+        return null;
+      }),
+    );
+
+    const token = getToken(req) as string;
+
+    const feed = mapEmailDetailsListToFeed(
+      emails.filter((email) => email != null),
+      normalizedUsername,
+      token,
+    );
+
+    res.type('application/rss+xml');
+    return res.send(feed.rss2());
+  };
+
+  render403Response = (req: Request, res: Response): void => {
+    log.debug(
+      `Action: '403' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const { type = TYPE_DEFAULT } = req.query;
+
+    if (type === 'html') {
+      res.status(403).render('pages/403');
+      return;
+    }
+
+    res.status(403).json({ message: 'You are not allowed to visit that page.' });
+  };
+
+  render404Response = (req: Request, res: Response): void => {
+    log.debug(
+      `Action: '404' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const { type = TYPE_DEFAULT } = req.query;
+
+    if (type === 'html') {
+      res.status(404).render('pages/404');
+      return;
+    }
+
+    res.status(404).json({ message: 'The page you are looking for was not found.' });
+  };
+
+  render422Response = (
+    errors: ValidationError[],
+    req: Request,
+    res: Response,
+    view = 'pages/422',
+  ): void => {
+    log.debug(
+      `Action: '422' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+    );
+
+    const { type = TYPE_DEFAULT } = req.query;
+
+    if (type === 'html') {
+      res.status(422).render(view, { errors });
+      return;
+    }
+
+    res.status(422).json({ errors });
+  };
+
+  render500Response = (err: Error, req: Request, res: Response): void => {
+    log.error(
+      `Action: '500' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)} Error: ${err.message}`,
+      err,
+    );
+
+    const { type = TYPE_DEFAULT } = req.query;
+
+    const genericErrorMessage = 'An internal server error occurred. Please try again later.';
+
+    if (type === 'html') {
+      res.status(500).render('pages/error', { error: { message: genericErrorMessage } });
+      return;
+    }
+
+    res.status(500).json({ message: genericErrorMessage });
+  };
+}

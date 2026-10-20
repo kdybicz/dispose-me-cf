@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dispose-me-local",
+  "main": "cloudflare/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "build": { "command": "yarn build" },
+  "assets": { "directory": "cloudflare/generated/public", "binding": "ASSETS" },
+  "vars": {
+    "DOMAIN_NAME": "example.com",
+    "APP_VERSION": "0.1.0",
+    "EMAIL_TTL_DAYS": "1",
+    "COOKIE_TTL_DAYS": "30",
+    "PRIVATE_ACCESS": "true",
+    "INBOX_BLACKLIST": "hostmaster,postmaster,webmaster,admin,administrator,abuse,root,ssl-admin,majordomo",
+    "LOG_LEVEL": "2"
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "dispose-me-local",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "cloudflare/migrations"
+  }],
+  "r2_buckets": [{ "binding": "EMAILS", "bucket_name": "dispose-me-local-emails" }],
+  "triggers": { "crons": ["*/10 * * * *"] },
+  "observability": { "enabled": true }
+}

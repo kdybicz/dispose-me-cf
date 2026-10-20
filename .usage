@@ -1,0 +1,18 @@
+Dispose Me - Cloudflare
+
+make setup              Install pinned dependencies on a fresh checkout
+make start              Migrate the local database and start Wrangler
+make build              Compile Tailwind CSS and EJS templates
+make clean              Remove dependencies and generated build artifacts
+make fmt                Format application code and Terraform
+make config             Generate deployment configuration from R2 Terraform state
+make infra args="..."   Run state/storage/routing Terraform commands using the R2 backend
+make deploy             Apply schema migrations, deploy Worker code, and upload its secret
+make deploy args="--dry-run"  Build the provisioned deployment without remote mutations
+make deploy environment=PATH  Deploy from another environment's checkout and R2 configuration
+make test               Run all CI verification checks
+make test/lint          Check application formatting and lint
+make test/unit          Run business-logic and deployment-tool tests
+make test/worker        Typecheck and dry-run the Worker bundle
+make test/integration   Exercise email-to-inbox behavior in the local Workers runtime
+make test/infra         Validate Terraform and execute mocked infrastructure tests

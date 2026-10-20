@@ -1,0 +1,7 @@
+account_id      = "00000000000000000000000000000000"
+domain_name     = "example.com"
+resource_prefix = "dispose-me-cf"
+email_ttl_days  = 1
+
+# Optional. Verify this destination in Cloudflare Email Routing before routing apply.
+# reserved_forward_to = "owner@example.net"
