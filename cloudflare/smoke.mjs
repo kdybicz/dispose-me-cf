@@ -262,7 +262,10 @@ try {
       assert.ok(!unexpectedRequests.some((url) => url.includes('remote.invalid')));
       assert.ok(imageRequests.length >= 2);
       assert.ok(imageRequests.every((request) => request.token === token && !request.referrer));
-      assert.equal(await page.locator('#msg_body').getAttribute('sandbox'), '');
+      assert.equal(
+        await page.locator('#msg_body').getAttribute('sandbox'),
+        'allow-popups allow-popups-to-escape-sandbox',
+      );
       // Browser isolation must hold independently of the sanitizer's allowlist.
       const isolated = await frame.locator('body').evaluate((body) => {
         const script = document.createElement('script');
@@ -278,6 +281,43 @@ try {
         }
       });
       assert.deepEqual(isolated, { parentAccessible: false, scriptExecuted: false });
+      // A clicked link opens a functioning external tab without access to the inbox.
+      const destinationRequests = [];
+      await page.context().route('https://destination.invalid/**', async (route) => {
+        destinationRequests.push(route.request());
+        await route.fulfill({
+          contentType: 'text/html',
+          headers: { 'X-Frame-Options': 'DENY' },
+          body:
+            '<!doctype html><script>window.destinationScriptRan = true</script>' +
+            '<form action="/submitted"><input name="value" value="synthetic"><button>Submit</button></form>',
+        });
+      });
+      const originalUrl = page.url();
+      const popupPromise = page.waitForEvent('popup');
+      await frame.getByRole('link', { name: 'Open destination' }).click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState('load');
+      assert.equal(popup.url(), 'https://destination.invalid/landing');
+      const destination = await popup.evaluate(() => ({
+        opener: window.opener,
+        referrer: document.referrer,
+        scriptRan: window.destinationScriptRan,
+      }));
+      assert.deepEqual(destination, { opener: null, referrer: '', scriptRan: true });
+      await Promise.all([
+        popup.waitForURL('https://destination.invalid/submitted?value=synthetic'),
+        popup.getByRole('button', { name: 'Submit' }).click(),
+      ]);
+      assert.equal(page.url(), originalUrl);
+      assert.ok(destinationRequests.length >= 2);
+      assert.ok(!destinationRequests[0].headers().referer);
+      assert.ok(
+        destinationRequests.every((request) => !(request.headers().referer ?? '').includes(token)),
+      );
+      assert.ok(destinationRequests.every((request) => !request.url().includes(token)));
+      assert.equal(await page.locator('body').getAttribute('data-compromised'), null);
+      await popup.close();
       await page.goto(`${base}/inbox/inlineinbox/latest?x-api-key=${token}`);
       await page
         .frameLocator('#msg_body')

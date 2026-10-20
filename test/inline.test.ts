@@ -62,3 +62,33 @@ test('resource errors do not log query credentials', (context) => {
   assert.equal(debug.mock.calls.length, 1);
   assert.ok(!JSON.stringify(debug.mock.calls).includes('secret-query-credential'));
 });
+
+test('opens allowed links without an opener or referrer and rejects executable link schemes', async () => {
+  // given
+  const email = await new EmailParser().parseEmail(
+    'Content-Type: text/html; charset=utf-8\r\n\r\n' +
+      '<a href="https://example.net" target="_top" rel="opener" ping="https://tracker.invalid">HTTPS</a>' +
+      '<a href="http://example.net" target="named-window">HTTP</a>' +
+      '<a href="mailto:sender@example.net">Mail</a>' +
+      '<a href="javascript:alert(1)">Script</a>' +
+      '<a href="java&#x73;cript:alert(1)">Encoded script</a>' +
+      '<a href="data:text/html,active">Data</a>' +
+      '<a href="vbscript:active">Other executable scheme</a>',
+  );
+  // when
+  const body = renderEmailBody(email, () => '/unused');
+  // then
+  assert.equal(body.match(/target="_blank"/g)?.length, 7);
+  assert.equal(body.match(/rel="noopener noreferrer"/g)?.length, 7);
+  assert.equal(body.match(/href=/g)?.length, 3);
+  assert.ok(body.includes('href="https://example.net"'));
+  assert.ok(body.includes('href="http://example.net"'));
+  assert.ok(body.includes('href="mailto:sender@example.net"'));
+  assert.ok(!body.includes('ping='));
+  assert.ok(!body.includes('target="_top"'));
+  assert.ok(!body.includes('named-window'));
+  assert.ok(!body.includes('rel="opener"'));
+  assert.ok(!body.includes('javascript:'));
+  assert.ok(!body.includes('data:'));
+  assert.ok(!body.includes('vbscript:'));
+});

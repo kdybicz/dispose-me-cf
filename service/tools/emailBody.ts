@@ -19,7 +19,7 @@ export const renderEmailBody = (
   return sanitizeHtml(email.body, {
     allowedTags: [...sanitizeHtml.defaults.allowedTags, 'img'],
     allowedAttributes: {
-      a: ['href', 'title'],
+      a: ['href', 'title', 'target', 'rel'],
       img: ['src', 'alt', 'width', 'height'],
       td: ['colspan', 'rowspan'],
       th: ['colspan', 'rowspan'],
@@ -27,6 +27,10 @@ export const renderEmailBody = (
     allowedSchemes: ['https', 'http', 'mailto'],
     allowProtocolRelative: false,
     transformTags: {
+      a: sanitizeHtml.simpleTransform('a', {
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      }),
       img: (_tagName, attributes) => {
         let src: string | undefined;
         if (/^cid:/i.test(attributes.src ?? '')) {

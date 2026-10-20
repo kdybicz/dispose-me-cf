@@ -38,7 +38,9 @@ export const inlineMessage = [
   '--inline-fixture',
   'Content-Type: text/html; charset=utf-8',
   '',
-  '<p>Inline images</p><img src="cid:large%40fixture"><img src="CID:%3Clarge%40fixture%3E">' +
+  '<p>Inline images</p>' +
+    '<a href="https://destination.invalid/landing" target="_top" rel="opener" ping="https://remote.invalid/ping">Open destination</a>' +
+    '<img src="cid:large%40fixture"><img src="CID:%3Clarge%40fixture%3E">' +
     '<img src="cid:second"><img src="cid:missing"><img src="cid:%ZZ">' +
     '<img src="cid:active"><img src="https://remote.invalid/pixel">' +
     '<script>parent.document.body.dataset.compromised="yes"</script>' +

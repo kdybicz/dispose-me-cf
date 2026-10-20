@@ -55,7 +55,7 @@
     class="w-full border-0 min-h-[60vh]"
     title="Email Message Body"
     name="msg_body"
-    sandbox=""
+    sandbox="allow-popups allow-popups-to-escape-sandbox"
     referrerpolicy="no-referrer"
     srcdoc="<%= `<!doctype html><html><head><meta name='referrer' content='no-referrer'><meta http-equiv='Content-Security-Policy' content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>body{margin:0;padding:24px;font:15px/1.6 system-ui;overflow-wrap:break-word;color:#334155;background:white}img{max-width:100%;height:auto}</style></head><body>${viewerBody}</body></html>` %>"
   ></iframe>
