@@ -19,6 +19,7 @@ for (const file of (await glob('service/views/**/*.ejs')).sort()) {
       'url',
       'assetDomain',
       'email',
+      'viewerBody',
       'emails',
       'token',
       'process',

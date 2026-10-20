@@ -27,5 +27,7 @@ jobs:
           terraform_wrapper: false
       - name: Install immutable dependencies
         run: make setup
+      - name: Install browser for rendering regression tests
+        run: yarn exec playwright install --with-deps chromium
       - name: Run the same verification as local development
         run: make test

@@ -52,29 +52,11 @@
 <div class="mt-6 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-800 shadow-sm">
   <iframe
     id="msg_body"
-    class="w-full"
-    style="border: none; overflow: hidden; min-height: 200px;"
+    class="w-full border-0 min-h-[60vh]"
     title="Email Message Body"
     name="msg_body"
-    srcdoc="<%= email.body %>"
-    onload="
-      var body = this.contentDocument.body;
-      var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      body.style.margin = '0';
-      body.style.padding = '24px';
-      body.style.fontFamily = 'Inter, ui-sans-serif, system-ui, -apple-system, sans-serif';
-      body.style.fontSize = '15px';
-      body.style.lineHeight = '1.6';
-      body.style.color = isDark ? '#e2e8f0' : '#334155';
-      body.style.backgroundColor = isDark ? '#1e293b' : '#ffffff';
-      body.style.wordBreak = 'break-word';
-      body.style.overflowWrap = 'break-word';
-      var links = body.querySelectorAll('a');
-      if (isDark) { for (var j = 0; j < links.length; j++) { links[j].style.color = '#818cf8'; } }
-      var resize = function() { this.style.height = body.scrollHeight + 'px'; }.bind(this);
-      resize();
-      new MutationObserver(resize).observe(body, { childList: true, subtree: true, attributes: true });
-      this.contentWindow.addEventListener('resize', resize);
-    "
+    sandbox=""
+    referrerpolicy="no-referrer"
+    srcdoc="<%= `<!doctype html><html><head><meta name='referrer' content='no-referrer'><meta http-equiv='Content-Security-Policy' content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>body{margin:0;padding:24px;font:15px/1.6 system-ui;overflow-wrap:break-word;color:#334155;background:white}img{max-width:100%;height:auto}</style></head><body>${viewerBody}</body></html>` %>"
   ></iframe>
 </div>

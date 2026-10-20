@@ -5,13 +5,24 @@ import dayjs = require('dayjs');
 import type { Request, Response } from 'express';
 import { matchedData, type ValidationError, validationResult } from 'express-validator';
 import type { EmailDatabase } from '../../cloudflare/EmailDatabase';
-import type { EmailParser, ParsedEmail } from '../../cloudflare/EmailParser';
+import {
+  type EmailParser,
+  type InlinePartDetails,
+  isInlineImageType,
+  type ParsedEmail,
+} from '../../cloudflare/EmailParser';
 import { getCookieMaxAgeMs } from '../tools/config';
 import { AUTH_COOKIE_KEY, AUTH_QUERY_KEY, REMEMBER_COOKIE_KEY } from '../tools/const';
+import { renderEmailBody } from '../tools/emailBody';
 import { mapEmailDetailsListToFeed } from '../tools/feed';
 import log from '../tools/log';
 import { getCookie, getToken, normalizeUsername } from '../tools/utils';
 import { TYPE_DEFAULT } from '../tools/validators';
+
+const logQuery = (req: Request): string => {
+  const { [AUTH_QUERY_KEY]: _token, ...query } = req.query;
+  return JSON.stringify(query);
+};
 
 export interface InboxListParams extends Record<string, string> {
   username: string;
@@ -49,6 +60,7 @@ export type EmailListItem = {
 
 export type EmailDetails = ParsedEmail & {
   id: string;
+  inlineParts: (InlinePartDetails & { url?: string })[];
 };
 
 export interface InboxDependencies {
@@ -71,10 +83,57 @@ export class InboxController {
     this.fileSystem = dependencies.fileSystem;
   }
 
+  private presentEmail(parsed: ParsedEmail, id: string, username: string): EmailDetails {
+    return {
+      ...parsed,
+      id,
+      attachments: parsed.attachments.map(({ content: _content, ...metadata }) => metadata),
+      inlineParts: parsed.inlineParts.map(({ content: _content, ...metadata }) => ({
+        ...metadata,
+        url: isInlineImageType(metadata.contentType)
+          ? `/inbox/${encodeURIComponent(username)}/${id}/inline/${metadata.part}`
+          : undefined,
+      })),
+    };
+  }
+
+  private viewerBody(email: EmailDetails, username: string, token: string | null): string {
+    return renderEmailBody(email, (part) => {
+      const query = token ? `?${new URLSearchParams({ [AUTH_QUERY_KEY]: token })}` : '';
+      return `/inbox/${encodeURIComponent(username)}/${email.id}/inline/${part}${query}`;
+    });
+  }
+
+  inlineImage = async (req: InboxRequest<InboxEmailParams>, res: Response): InboxResponse => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return this.render422Response(errors.array(), req, res);
+    const { id, username, part } = matchedData<{
+      id: string;
+      username: string;
+      part: number;
+    }>(req);
+    if (!(await this.emailDatabase.exists(normalizeUsername(username), id))) {
+      return this.render404Response(req, res);
+    }
+    const email = await this.emailParser.parseEmail(await this.fileSystem.getObject(id));
+    const image = email.inlineParts.find((image) => image.part === part);
+    if (!image || !isInlineImageType(image.contentType)) {
+      return this.render404Response(req, res);
+    }
+    res.set({
+      'Cache-Control': 'no-store',
+      'Content-Disposition': 'inline',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      // The viewer has an opaque sandbox origin. Authentication is still mandatory.
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.type(image.contentType).send(image.content);
+  };
+
   index = async (req: InboxRequest, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'index' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'index' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const { type = TYPE_DEFAULT } = matchedData<{ type?: string }>(req);
 
@@ -94,9 +153,7 @@ export class InboxController {
     req: InboxRequest<Record<string, never>, InboxAuthBody>,
     res: Response,
   ): InboxResponse => {
-    log.debug(
-      `Action: 'auth' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'auth' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -134,9 +191,7 @@ export class InboxController {
   }
 
   show = async (req: InboxRequest<InboxEmailParams>, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'show' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'show' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -161,18 +216,15 @@ export class InboxController {
       }
 
       const parsedEmail = await this.emailParser.parseEmail(emailBody);
-      email = {
-        ...parsedEmail,
-        id,
-        attachments: parsedEmail.attachments.map((attachment) => ({
-          ...attachment,
-          content: undefined,
-        })),
-      };
+      email = this.presentEmail(parsedEmail, id, normalizedUsername);
 
       if (type === 'html') {
         const token = getToken(req);
-        return res.render('pages/email', { email, token });
+        return res.render('pages/email', {
+          email,
+          token,
+          viewerBody: this.viewerBody(email, normalizedUsername, token),
+        });
       }
 
       return res.json({ email });
@@ -182,9 +234,7 @@ export class InboxController {
   };
 
   download = async (req: InboxRequest<InboxEmailParams>, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'download' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'download' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -216,7 +266,7 @@ export class InboxController {
     res: Response,
   ): InboxResponse => {
     log.debug(
-      `Action: 'download attachment' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
+      `Action: 'download attachment' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`,
     );
 
     const errors = validationResult(req);
@@ -258,9 +308,7 @@ export class InboxController {
   };
 
   delete = async (req: InboxRequest<InboxEmailParams>, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'delete' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'delete' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -285,9 +333,7 @@ export class InboxController {
   };
 
   latest = async (req: InboxRequest<InboxListParams>, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'latest' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'latest' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -314,29 +360,24 @@ export class InboxController {
 
       if (emailBody) {
         const parsedEmail = await this.emailParser.parseEmail(emailBody);
-        email = {
-          ...parsedEmail,
-          id: messageId,
-          attachments: parsedEmail.attachments.map((attachment) => ({
-            ...attachment,
-            content: undefined,
-          })),
-        };
+        email = this.presentEmail(parsedEmail, messageId, normalizedUsername);
       }
     }
 
     if (type === 'html') {
       const token = getToken(req);
-      return res.render('pages/email', { email, token });
+      return res.render('pages/email', {
+        email,
+        token,
+        viewerBody: email ? this.viewerBody(email, normalizedUsername, token) : '',
+      });
     }
 
     return res.json({ email });
   };
 
   inbox = async (req: InboxRequest, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'inbox' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'inbox' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const { type = TYPE_DEFAULT } = matchedData<{ type?: string }>(req);
 
@@ -348,9 +389,7 @@ export class InboxController {
   };
 
   list = async (req: InboxRequest<InboxListParams>, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'list' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'list' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -389,9 +428,7 @@ export class InboxController {
   };
 
   listRss = async (req: InboxRequest<InboxListParams>, res: Response): InboxResponse => {
-    log.debug(
-      `Action: 'listRss' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: 'listRss' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -433,9 +470,7 @@ export class InboxController {
   };
 
   render403Response = (req: Request, res: Response): void => {
-    log.debug(
-      `Action: '403' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: '403' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const { type = TYPE_DEFAULT } = req.query;
 
@@ -448,9 +483,7 @@ export class InboxController {
   };
 
   render404Response = (req: Request, res: Response): void => {
-    log.debug(
-      `Action: '404' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: '404' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const { type = TYPE_DEFAULT } = req.query;
 
@@ -468,9 +501,7 @@ export class InboxController {
     res: Response,
     view = 'pages/422',
   ): void => {
-    log.debug(
-      `Action: '422' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)}`,
-    );
+    log.debug(`Action: '422' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)}`);
 
     const { type = TYPE_DEFAULT } = req.query;
 
@@ -484,7 +515,7 @@ export class InboxController {
 
   render500Response = (err: Error, req: Request, res: Response): void => {
     log.error(
-      `Action: '500' Params: ${JSON.stringify(req.params)} Query: ${JSON.stringify(req.query)} Error: ${err.message}`,
+      `Action: '500' Params: ${JSON.stringify(req.params)} Query: ${logQuery(req)} Error: ${err.message}`,
       err,
     );
 

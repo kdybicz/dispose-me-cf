@@ -36,6 +36,7 @@ Then open `/inbox/test`. Local D1/R2 data is kept under `.wrangler/`.
 ## Verification
 
 ```bash
+yarn exec playwright install chromium
 make test
 ```
 
@@ -44,7 +45,10 @@ deployment-tool tests, a typechecked Worker bundle, the actual local Workers
 email-to-inbox integration test, and mocked Terraform tests. The integration suite
 uses separate local state and tests reception, normalization, Bcc-style delivery,
 duplicate delivery, MIME/charset handling, attachments, EJS rendering, authentication,
-RSS, deletion, and expiry. It does not send live mail or apply infrastructure.
+RSS, deletion, and expiry. Chromium checks inline CID images (including a 3 MiB PNG)
+and sandbox isolation against synthetic hostile HTML. On Linux hosts missing browser
+system libraries, install them with `yarn exec playwright install --with-deps chromium`.
+The suite does not send live mail or apply infrastructure.
 
 Use `make` to list commands. Yarn entry points include `yarn dev`, `yarn build`,
 `yarn test`, `yarn deploy`, `yarn config`, and `yarn infra`.

@@ -26,7 +26,21 @@ export interface ParsedEmail {
   body: string;
   received: Date;
   attachments: AttachmentDetails[];
+  inlineParts: InlinePartDetails[];
 }
+
+export interface InlinePartDetails extends AttachmentDetails {
+  part: number;
+  contentId?: string;
+}
+
+export const normalizeContentId = (value: string): string => {
+  const trimmed = value.trim();
+  return trimmed.startsWith('<') && trimmed.endsWith('>') ? trimmed.slice(1, -1) : trimmed;
+};
+
+export const isInlineImageType = (contentType: string): boolean =>
+  ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(contentType);
 
 const mapAddress = (address: Address): EmailAddress => {
   const value = address.address ?? '';
@@ -44,6 +58,21 @@ export class EmailParser {
   async parseEmail(raw: string | Buffer): Promise<ParsedEmail> {
     const email = await PostalMime.parse(raw);
     const date = new Date(email.date ?? '');
+    const parts = email.attachments.map((attachment, part) => {
+      const content =
+        typeof attachment.content === 'string'
+          ? Buffer.from(attachment.content, 'utf8')
+          : Buffer.from(attachment.content);
+      return {
+        part,
+        disposition: attachment.disposition,
+        contentId: attachment.contentId ? normalizeContentId(attachment.contentId) : undefined,
+        filename: attachment.filename ?? undefined,
+        size: content.byteLength,
+        contentType: attachment.mimeType.toLowerCase(),
+        content,
+      };
+    });
     return {
       from: email.from ? mapAddress(email.from) : mapAddress({ address: '', name: '' }),
       to: (email.to ?? []).map(mapAddress),
@@ -52,20 +81,17 @@ export class EmailParser {
       subject: email.subject ?? '',
       body: email.html ?? email.text ?? '',
       received: Number.isNaN(date.getTime()) ? new Date(0) : date,
-      attachments: email.attachments
-        .filter((attachment) => attachment.disposition === 'attachment')
-        .map((attachment) => {
-          const content =
-            typeof attachment.content === 'string'
-              ? Buffer.from(attachment.content, 'utf8')
-              : Buffer.from(attachment.content);
-          return {
-            filename: attachment.filename ?? undefined,
-            size: content.byteLength,
-            contentType: attachment.mimeType,
-            content,
-          };
-        }),
+      attachments: parts
+        .filter((part) => part.disposition === 'attachment')
+        .map(({ filename, size, contentType, content }) => ({
+          filename,
+          size,
+          contentType,
+          content,
+        })),
+      inlineParts: parts
+        .filter((part) => part.disposition !== 'attachment')
+        .map(({ disposition: _disposition, ...part }) => part),
     };
   }
 }

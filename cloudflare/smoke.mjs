@@ -1,6 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync, spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { chromium } from 'playwright';
+import { inlineMessage, largePng } from '../test/fixtures/inline.ts';
 
 const wrangler = 'node_modules/wrangler/bin/wrangler.js';
 process.env.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV = 'false';
@@ -172,6 +174,120 @@ try {
   );
   assert.equal((await fetch(`${base}/inbox?type=json&x-api-key=${token}`)).status, 200);
 
+  // given: synthetic related MIME, including multi-megabyte images and hostile HTML
+  const inlineDelivery = await deliver('inlineinbox@example.com', inlineMessage);
+  assert.equal(inlineDelivery.status, 200, await inlineDelivery.text());
+  assert.equal((await deliver('inlineother@example.com', inlineMessage)).status, 200);
+  const inlineList = await (await request('/inbox/inlineinbox?type=json')).json();
+  const inlineId = inlineList.emails[0].id;
+  const inlineBase = `/inbox/inlineinbox/${inlineId}`;
+  const inlineResponse = await request(`${inlineBase}?type=json`);
+  const inlineJsonText = await inlineResponse.text();
+  const inlineEmail = JSON.parse(inlineJsonText).email;
+  assert.equal(inlineEmail.inlineParts.length, 5);
+  assert.equal(inlineEmail.inlineParts[0].contentId, 'large@fixture');
+  assert.equal(inlineEmail.inlineParts[0].size, largePng.length);
+  assert.equal(inlineEmail.inlineParts[0].content, undefined);
+  assert.equal(inlineEmail.inlineParts[3].url, undefined);
+  assert.ok(inlineJsonText.length < 5000, 'JSON must not embed image bytes');
+  const imagePath = inlineEmail.inlineParts[0].url;
+  // when / then: authorization, membership, content restrictions and raw preservation
+  assert.equal((await fetch(`${base}${imagePath}`)).status, 403);
+  assert.equal((await request(imagePath, { headers: { 'x-api-key': 'wrong' } })).status, 403);
+  assert.equal((await request(`/inbox/unrelated/${inlineId}/inline/0`)).status, 404);
+  assert.equal((await request(`/inbox/admin/${inlineId}/inline/0`)).status, 422);
+  assert.equal((await request(`${inlineBase}/inline/3`)).status, 404);
+  assert.equal((await request(`${inlineBase}/inline/99`)).status, 404);
+  assert.equal((await request(`${inlineBase}/inline/-1`)).status, 422);
+  const image = await request(imagePath);
+  assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('content-disposition'), 'inline');
+  assert.equal(image.headers.get('cache-control'), 'no-store');
+  assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(image.headers.get('referrer-policy'), 'no-referrer');
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), largePng);
+  assert.equal(await (await request(`${inlineBase}/download`)).text(), inlineMessage);
+  assert.deepEqual(
+    Buffer.from(
+      await (await request(`${inlineBase}/attachment?filename=fixture.bin`)).arrayBuffer(),
+    ),
+    Buffer.from([0, 1, 255]),
+  );
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const unexpectedRequests = [];
+    const imageRequests = [];
+    page.on('request', (req) => {
+      if (!req.url().startsWith(base)) unexpectedRequests.push(req.url());
+      if (req.url().includes('/inline/')) {
+        imageRequests.push({
+          token: new URL(req.url()).searchParams.get('x-api-key'),
+          referrer: req.headers().referer ?? '',
+        });
+      }
+    });
+    // No injected headers or cookies: the sandbox must work with query-token login.
+    await page.goto(`${base}${inlineBase}?x-api-key=${token}`);
+    const frame = page.frameLocator('#msg_body');
+    await frame.locator('img').first().waitFor();
+    await page.waitForFunction(() => document.querySelector('#msg_body')?.contentDocument === null);
+    await frame
+      .locator('img')
+      .first()
+      .evaluate((img) => img.decode());
+    assert.equal(
+      await frame
+        .locator('img')
+        .first()
+        .evaluate((img) => img.naturalWidth),
+      1024,
+    );
+    assert.equal(
+      await frame.locator('img').nth(1).getAttribute('src'),
+      await frame.locator('img').first().getAttribute('src'),
+    );
+    await frame
+      .locator('img')
+      .nth(2)
+      .evaluate((img) => img.decode());
+    assert.equal(await page.locator('body').getAttribute('data-compromised'), null);
+    assert.equal(
+      await frame.locator('script, form, iframe, svg, meta[http-equiv="refresh"]').count(),
+      0,
+    );
+    assert.ok(!unexpectedRequests.some((url) => url.includes('remote.invalid')));
+    assert.ok(imageRequests.length >= 2);
+    assert.ok(imageRequests.every((request) => request.token === token && !request.referrer));
+    assert.equal(await page.locator('#msg_body').getAttribute('sandbox'), '');
+    // Browser isolation must hold independently of the sanitizer's allowlist.
+    const isolated = await frame.locator('body').evaluate((body) => {
+      const script = document.createElement('script');
+      script.textContent = 'window.emailScriptExecuted = true';
+      body.append(script);
+      try {
+        return {
+          parentAccessible: Boolean(parent.document),
+          scriptExecuted: 'emailScriptExecuted' in window,
+        };
+      } catch {
+        return { parentAccessible: false, scriptExecuted: 'emailScriptExecuted' in window };
+      }
+    });
+    assert.deepEqual(isolated, { parentAccessible: false, scriptExecuted: false });
+    await page.goto(`${base}/inbox/inlineinbox/latest?x-api-key=${token}`);
+    await page
+      .frameLocator('#msg_body')
+      .locator('img')
+      .first()
+      .evaluate((img) => img.decode());
+  } finally {
+    await browser.close();
+  }
+  assert.equal((await request(`${inlineBase}/delete`, { method: 'DELETE' })).status, 204);
+  assert.equal((await request(imagePath)).status, 404);
+  assert.equal((await request(`/inbox/inlineother/${inlineId}/inline/0`)).status, 200);
+
   const rejected = await deliver('admin@example.com');
   assert.ok((await rejected.text()).includes('Recipient is not allowed'));
   const invalidRecipient = await deliver('bad%name@example.com');
@@ -200,9 +316,10 @@ try {
     'DB',
     '--local',
     '--command',
-    "UPDATE messages SET ExpireAt = 1 WHERE Username = 'otherinbox'",
+    "UPDATE messages SET ExpireAt = 1 WHERE Username IN ('otherinbox', 'inlineother')",
   );
   assert.equal((await request(`/inbox/otherinbox/${id}?type=json`)).status, 404);
+  assert.equal((await request(`/inbox/inlineother/${inlineId}/inline/0`)).status, 404);
   assert.equal((await (await request('/inbox/otherinbox?type=json')).json()).emails.length, 0);
   assert.equal((await fetch(`${base}/cdn-cgi/handler/scheduled`)).status, 200);
   const remaining = JSON.parse(

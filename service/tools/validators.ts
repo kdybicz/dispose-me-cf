@@ -138,6 +138,14 @@ export const buildShowEmailValidationChain = (): ValidationChain[] => {
   ];
 };
 
+export const buildInlineImageValidationChain = (): ValidationChain[] => [
+  ...buildShowEmailValidationChain(),
+  param('part')
+    .matches(/^(0|[1-9][0-9]*)$/)
+    .isInt({ min: 0, max: 2147483647 })
+    .toInt(),
+];
+
 export const buildListEmailsValidationChain = (): ValidationChain[] => {
   return [
     buildUsernameParamValidator(),
