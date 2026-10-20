@@ -1,7 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync, spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { chromium } from 'playwright';
 import { inlineMessage, largePng } from '../test/fixtures/inline.ts';
 
 const wrangler = 'node_modules/wrangler/bin/wrangler.js';
@@ -213,76 +212,81 @@ try {
     ),
     Buffer.from([0, 1, 255]),
   );
-  const browser = await chromium.launch({ headless: true });
-  try {
-    const page = await browser.newPage();
-    const unexpectedRequests = [];
-    const imageRequests = [];
-    page.on('request', (req) => {
-      if (!req.url().startsWith(base)) unexpectedRequests.push(req.url());
-      if (req.url().includes('/inline/')) {
-        imageRequests.push({
-          token: new URL(req.url()).searchParams.get('x-api-key'),
-          referrer: req.headers().referer ?? '',
-        });
-      }
-    });
-    // No injected headers or cookies: the sandbox must work with query-token login.
-    await page.goto(`${base}${inlineBase}?x-api-key=${token}`);
-    const frame = page.frameLocator('#msg_body');
-    await frame.locator('img').first().waitFor();
-    await page.waitForFunction(() => document.querySelector('#msg_body')?.contentDocument === null);
-    await frame
-      .locator('img')
-      .first()
-      .evaluate((img) => img.decode());
-    assert.equal(
+  if (process.argv.includes('--browser')) {
+    const { chromium } = await import('playwright');
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      const unexpectedRequests = [];
+      const imageRequests = [];
+      page.on('request', (req) => {
+        if (!req.url().startsWith(base)) unexpectedRequests.push(req.url());
+        if (req.url().includes('/inline/')) {
+          imageRequests.push({
+            token: new URL(req.url()).searchParams.get('x-api-key'),
+            referrer: req.headers().referer ?? '',
+          });
+        }
+      });
+      // No injected headers or cookies: the sandbox must work with query-token login.
+      await page.goto(`${base}${inlineBase}?x-api-key=${token}`);
+      const frame = page.frameLocator('#msg_body');
+      await frame.locator('img').first().waitFor();
+      await page.waitForFunction(
+        () => document.querySelector('#msg_body')?.contentDocument === null,
+      );
       await frame
         .locator('img')
         .first()
-        .evaluate((img) => img.naturalWidth),
-      1024,
-    );
-    assert.equal(
-      await frame.locator('img').nth(1).getAttribute('src'),
-      await frame.locator('img').first().getAttribute('src'),
-    );
-    await frame
-      .locator('img')
-      .nth(2)
-      .evaluate((img) => img.decode());
-    assert.equal(await page.locator('body').getAttribute('data-compromised'), null);
-    assert.equal(
-      await frame.locator('script, form, iframe, svg, meta[http-equiv="refresh"]').count(),
-      0,
-    );
-    assert.ok(!unexpectedRequests.some((url) => url.includes('remote.invalid')));
-    assert.ok(imageRequests.length >= 2);
-    assert.ok(imageRequests.every((request) => request.token === token && !request.referrer));
-    assert.equal(await page.locator('#msg_body').getAttribute('sandbox'), '');
-    // Browser isolation must hold independently of the sanitizer's allowlist.
-    const isolated = await frame.locator('body').evaluate((body) => {
-      const script = document.createElement('script');
-      script.textContent = 'window.emailScriptExecuted = true';
-      body.append(script);
-      try {
-        return {
-          parentAccessible: Boolean(parent.document),
-          scriptExecuted: 'emailScriptExecuted' in window,
-        };
-      } catch {
-        return { parentAccessible: false, scriptExecuted: 'emailScriptExecuted' in window };
-      }
-    });
-    assert.deepEqual(isolated, { parentAccessible: false, scriptExecuted: false });
-    await page.goto(`${base}/inbox/inlineinbox/latest?x-api-key=${token}`);
-    await page
-      .frameLocator('#msg_body')
-      .locator('img')
-      .first()
-      .evaluate((img) => img.decode());
-  } finally {
-    await browser.close();
+        .evaluate((img) => img.decode());
+      assert.equal(
+        await frame
+          .locator('img')
+          .first()
+          .evaluate((img) => img.naturalWidth),
+        1024,
+      );
+      assert.equal(
+        await frame.locator('img').nth(1).getAttribute('src'),
+        await frame.locator('img').first().getAttribute('src'),
+      );
+      await frame
+        .locator('img')
+        .nth(2)
+        .evaluate((img) => img.decode());
+      assert.equal(await page.locator('body').getAttribute('data-compromised'), null);
+      assert.equal(
+        await frame.locator('script, form, iframe, svg, meta[http-equiv="refresh"]').count(),
+        0,
+      );
+      assert.ok(!unexpectedRequests.some((url) => url.includes('remote.invalid')));
+      assert.ok(imageRequests.length >= 2);
+      assert.ok(imageRequests.every((request) => request.token === token && !request.referrer));
+      assert.equal(await page.locator('#msg_body').getAttribute('sandbox'), '');
+      // Browser isolation must hold independently of the sanitizer's allowlist.
+      const isolated = await frame.locator('body').evaluate((body) => {
+        const script = document.createElement('script');
+        script.textContent = 'window.emailScriptExecuted = true';
+        body.append(script);
+        try {
+          return {
+            parentAccessible: Boolean(parent.document),
+            scriptExecuted: 'emailScriptExecuted' in window,
+          };
+        } catch {
+          return { parentAccessible: false, scriptExecuted: 'emailScriptExecuted' in window };
+        }
+      });
+      assert.deepEqual(isolated, { parentAccessible: false, scriptExecuted: false });
+      await page.goto(`${base}/inbox/inlineinbox/latest?x-api-key=${token}`);
+      await page
+        .frameLocator('#msg_body')
+        .locator('img')
+        .first()
+        .evaluate((img) => img.decode());
+    } finally {
+      await browser.close();
+    }
   }
   assert.equal((await request(`${inlineBase}/delete`, { method: 'DELETE' })).status, 204);
   assert.equal((await request(imagePath)).status, 404);

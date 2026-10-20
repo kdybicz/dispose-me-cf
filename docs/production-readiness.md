@@ -9,8 +9,9 @@ HTTPS and SMTP checks on the configured domain.
 - **Email HTML isolation.** The viewer sanitizes HTML and uses an opaque-origin
   `sandbox=""` iframe with a restrictive document CSP. Scripts, forms, nested
   frames, SVG, sender CSS, and remote images are removed. Only supported CID raster
-  images receive authenticated same-origin URLs. Chromium regression coverage
-  verifies isolation and multi-megabyte image decoding. The frame scrolls rather
+  images receive authenticated same-origin URLs. Opt-in local Chromium regression
+  coverage (`yarn test:browser`, excluded from CI) verifies isolation and
+  multi-megabyte image decoding. The frame scrolls rather
   than allowing parent DOM access for automatic height measurement. API `body`
   remains untrusted original parsed HTML; consumers must isolate it themselves.
   Resource URLs in the viewer carry the instance token because opaque frames

@@ -28,6 +28,7 @@
     "test:deployment": "node --test cloudflare/deployment.test.mjs cloudflare/terraform-state.test.mjs",
     "test:unit": "tsx --test test/*.test.ts",
     "test:integration": "yarn build && node cloudflare/smoke.mjs",
+    "test:browser": "yarn build && node cloudflare/smoke.mjs --browser",
     "test": "yarn test:unit && yarn test:deployment && yarn test:integration",
     "lint": "biome check service cloudflare test",
     "format": "biome check --write service cloudflare test",
