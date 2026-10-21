@@ -5,21 +5,29 @@ import { EmailParser } from '../cloudflare/EmailParser';
 import { InboxController } from '../service/api/InboxController';
 import { renderEmailBody } from '../service/tools/emailBody';
 import log from '../service/tools/log';
-import { inlineMessage, largePng } from './fixtures/inline';
+import { inlineMessage, largePng, smallPng } from './fixtures/inline';
 
 test('preserves inline parts, IDs and multi-megabyte bytes separately from downloads', async () => {
   // given / when
   const email = await new EmailParser().parseEmail(inlineMessage);
   // then
-  assert.equal(email.inlineParts.length, 5);
+  assert.equal(email.inlineParts.length, 6);
   assert.equal(email.inlineParts[0].contentId, 'large@fixture');
   assert.equal(email.inlineParts[1].contentId, 'second');
   assert.equal(email.inlineParts[4].contentId, undefined);
   assert.ok(largePng.length > 3 * 1024 * 1024);
   assert.deepEqual(email.inlineParts[0].content, largePng);
-  assert.equal(email.attachments.length, 1);
+  assert.equal(email.attachments.length, 4);
   assert.equal(email.attachments[0].filename, 'fixture.bin');
   assert.deepEqual(email.attachments[0].content, Buffer.from([0, 1, 255]));
+  const attachedImage = email.inlineParts.find((part) => part.contentId === 'attached');
+  assert.equal(attachedImage?.part, 6);
+  assert.equal(attachedImage?.filename, 'attached.png');
+  assert.deepEqual(attachedImage?.content, smallPng);
+  assert.deepEqual(email.attachments[1].content, smallPng);
+  assert.equal(email.attachments[1].filename, 'attached.png');
+  assert.ok(!email.inlineParts.some((part) => part.filename === 'active.svg'));
+  assert.ok(!email.inlineParts.some((part) => part.filename === 'no-cid.png'));
 });
 
 test('resolves encoded and repeated CIDs to the first supported part and sanitizes active HTML', async () => {
@@ -32,6 +40,8 @@ test('resolves encoded and repeated CIDs to the first supported part and sanitiz
   assert.equal(body.match(/src="\/image\/1\?/g)?.length, 2);
   assert.ok(!body.includes('/image/2'));
   assert.ok(!body.includes('/image/3'));
+  assert.ok(body.includes('src="/image/6?x-api-key=synthetic"'));
+  assert.ok(!body.includes('/image/7'));
   assert.ok(!body.includes('cid:'));
   assert.ok(!body.includes('remote.invalid'));
   assert.ok(!body.includes('script'));

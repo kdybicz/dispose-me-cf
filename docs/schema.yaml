@@ -586,8 +586,11 @@ components:
         inlineParts:
           type: array
           description: |
-            Non-attachment MIME parts, including inline images. Bytes are omitted.
-            Explicit attachments retain the existing attachments/download behavior.
+            Non-attachment MIME parts plus supported raster-image attachments with a
+            Content-ID. Bytes are omitted. CID-bearing raster-image attachments also
+            remain in attachments and retain the existing download behavior. Other
+            explicit attachments, including images without a Content-ID and active
+            formats such as SVG, are not included in inlineParts.
             The HTML viewer matches case-sensitive Content-IDs after stripping angle
             brackets and percent-decoding cid references once. Duplicate IDs select
             the first supported image in MIME order; repeated references reuse its

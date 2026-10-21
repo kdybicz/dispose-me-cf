@@ -90,7 +90,11 @@ export class EmailParser {
           content,
         })),
       inlineParts: parts
-        .filter((part) => part.disposition !== 'attachment')
+        .filter(
+          (part) =>
+            part.disposition !== 'attachment' ||
+            Boolean(part.contentId && isInlineImageType(part.contentType)),
+        )
         .map(({ disposition: _disposition, ...part }) => part),
     };
   }

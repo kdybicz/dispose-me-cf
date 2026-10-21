@@ -22,7 +22,7 @@ export const largePng = Buffer.concat([
   chunk('IDAT', deflateSync(Buffer.alloc(1024 * (1024 * 3 + 1)), { level: 0 })),
   chunk('IEND', Buffer.alloc(0)),
 ]);
-const smallPng = Buffer.from(
+export const smallPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=',
   'base64',
 );
@@ -47,7 +47,9 @@ export const inlineMessage = [
     '<img src="cid:second" onload="parent.document.body.dataset.compromised=\'yes\'">' +
     '<form action="/logout"><input type="submit"></form>' +
     '<iframe src="/logout"></iframe><meta http-equiv="refresh" content="0;url=/logout">' +
-    '<svg onload="alert(1)"></svg><style>body{background:url(https://remote.invalid/css)}</style>',
+    '<svg onload="alert(1)"></svg><style>body{background:url(https://remote.invalid/css)}</style>' +
+    '<img src="cid:attached" alt="CID attachment">' +
+    '<img src="cid:attached-active" alt="Unsupported attachment">',
   ...[
     { id: 'large@fixture', type: 'image/png', content: largePng, disposition: 'inline' },
     { id: 'second', type: 'image/png', content: smallPng, disposition: '' },
@@ -64,6 +66,24 @@ export const inlineMessage = [
       type: 'application/octet-stream',
       content: Buffer.from([0, 1, 255]),
       disposition: 'attachment; filename="fixture.bin"',
+    },
+    {
+      id: 'attached',
+      type: 'image/png',
+      content: smallPng,
+      disposition: 'attachment; filename="attached.png"',
+    },
+    {
+      id: 'attached-active',
+      type: 'image/svg+xml',
+      content: Buffer.from('<svg/>'),
+      disposition: 'attachment; filename="active.svg"',
+    },
+    {
+      id: '',
+      type: 'image/png',
+      content: smallPng,
+      disposition: 'attachment; filename="no-cid.png"',
     },
   ].flatMap(({ id, type, content, disposition }) => [
     '--inline-fixture',

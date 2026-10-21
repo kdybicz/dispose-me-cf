@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync, spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { inlineMessage, largePng } from '../test/fixtures/inline.ts';
+import { inlineMessage, largePng, smallPng } from '../test/fixtures/inline.ts';
 
 const wrangler = 'node_modules/wrangler/bin/wrangler.js';
 process.env.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV = 'false';
@@ -183,7 +183,7 @@ try {
   const inlineResponse = await request(`${inlineBase}?type=json`);
   const inlineJsonText = await inlineResponse.text();
   const inlineEmail = JSON.parse(inlineJsonText).email;
-  assert.equal(inlineEmail.inlineParts.length, 5);
+  assert.equal(inlineEmail.inlineParts.length, 6);
   assert.equal(inlineEmail.inlineParts[0].contentId, 'large@fixture');
   assert.equal(inlineEmail.inlineParts[0].size, largePng.length);
   assert.equal(inlineEmail.inlineParts[0].content, undefined);
@@ -212,6 +212,25 @@ try {
     ),
     Buffer.from([0, 1, 255]),
   );
+  const attachedPart = inlineEmail.inlineParts.find((part) => part.contentId === 'attached');
+  assert.equal(attachedPart.filename, 'attached.png');
+  assert.equal(attachedPart.content, undefined);
+  assert.ok(inlineEmail.attachments.some((part) => part.filename === 'attached.png'));
+  assert.deepEqual(Buffer.from(await (await request(attachedPart.url)).arrayBuffer()), smallPng);
+  const attachedDownload = await request(`${inlineBase}/attachment?filename=attached.png`);
+  assert.equal(attachedDownload.headers.get('content-type'), 'image/png');
+  assert.ok(attachedDownload.headers.get('content-disposition').startsWith('attachment;'));
+  assert.deepEqual(Buffer.from(await attachedDownload.arrayBuffer()), smallPng);
+  assert.equal(
+    (await request(attachedPart.url, { headers: { 'x-api-key': 'wrong' } })).status,
+    403,
+  );
+  assert.equal(
+    (await request(`/inbox/unrelated/${inlineId}/inline/${attachedPart.part}`)).status,
+    404,
+  );
+  assert.equal((await request(`${inlineBase}/inline/7`)).status, 404);
+  assert.equal((await request(`${inlineBase}/inline/8`)).status, 404);
   if (process.argv.includes('--browser')) {
     const { chromium } = await import('playwright');
     const browser = await chromium.launch({ headless: true });
@@ -254,13 +273,21 @@ try {
         .locator('img')
         .nth(2)
         .evaluate((img) => img.decode());
+      await frame.getByAltText('CID attachment', { exact: true }).evaluate((img) => img.decode());
+      assert.equal(
+        await frame
+          .getByAltText('CID attachment', { exact: true })
+          .evaluate((img) => img.naturalWidth),
+        1,
+      );
+      assert.equal(await frame.getByAltText('Unsupported attachment').getAttribute('src'), null);
       assert.equal(await page.locator('body').getAttribute('data-compromised'), null);
       assert.equal(
         await frame.locator('script, form, iframe, svg, meta[http-equiv="refresh"]').count(),
         0,
       );
       assert.ok(!unexpectedRequests.some((url) => url.includes('remote.invalid')));
-      assert.ok(imageRequests.length >= 2);
+      assert.ok(imageRequests.length >= 3);
       assert.ok(imageRequests.every((request) => request.token === token && !request.referrer));
       assert.equal(
         await page.locator('#msg_body').getAttribute('sandbox'),
@@ -330,6 +357,7 @@ try {
   }
   assert.equal((await request(`${inlineBase}/delete`, { method: 'DELETE' })).status, 204);
   assert.equal((await request(imagePath)).status, 404);
+  assert.equal((await request(attachedPart.url)).status, 404);
   assert.equal((await request(`/inbox/inlineother/${inlineId}/inline/0`)).status, 200);
 
   const rejected = await deliver('admin@example.com');
