@@ -151,6 +151,60 @@ paths:
         - api_token_query: []
         - api_token_cookie: []
 
+  /inbox/{username}/{id}/inline/{part}:
+    get:
+      summary: Load an inline raster image
+      description: |
+        Returns the original decoded MIME part bytes, after instance authentication,
+        username validation, and unexpired inbox membership checks on every request.
+        Supports image/png, image/jpeg, image/gif, image/webp, and image/avif only.
+        SVG and other active formats are not served. No additional image byte-size
+        or part-count cap is imposed; Workers memory/CPU and Email Routing limits
+        still apply. Each resource request reparses the stored raw message.
+        Responses use no-store, nosniff, inline disposition, sandbox CSP, and
+        no-referrer. CORP permits embedding in the opaque-origin sandbox but does
+        not bypass authentication or grant CORS access.
+      operationId: getInlineImage
+      tags: [Inbox]
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: part
+          in: path
+          required: true
+          description: Zero-based MIME attachment-array index returned in inlineParts.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 2147483647
+      responses:
+        '200':
+          description: Decoded raster image bytes, never base64 JSON.
+          content:
+            image/png: {}
+            image/jpeg: {}
+            image/gif: {}
+            image/webp: {}
+            image/avif: {}
+        '403':
+          description: Missing or invalid instance token.
+        '404':
+          description: Missing, deleted, expired, or non-member message; absent or unsupported part.
+        '422':
+          description: Invalid or reserved username, message ID, or part index.
+      security:
+        - api_token_header: []
+        - api_token_query: []
+        - api_token_cookie: []
+
   /inbox/{username}/{id}/attachment:
     get:
       summary: Download a specific attachment from an email
@@ -492,6 +546,7 @@ components:
         - body
         - received
         - attachments
+        - inlineParts
         - id
       properties:
         from:
@@ -517,7 +572,7 @@ components:
           examples: ["Subject of the email"]
         body:
           type: string
-          description: Body content of the email.
+          description: Original parsed body, with unresolved cid URLs. Untrusted HTML; API consumers must isolate/sanitize it before display. The HTML viewer separately sanitizes and resolves supported CID images.
           examples: ["Body of the email"]
         received:
           type: string
@@ -528,6 +583,34 @@ components:
           description: List of attachments for the email.
           items:
             $ref: '#/components/schemas/Attachment'
+        inlineParts:
+          type: array
+          description: |
+            Non-attachment MIME parts plus supported raster-image attachments with a
+            Content-ID. Bytes are omitted. CID-bearing raster-image attachments also
+            remain in attachments and retain the existing download behavior. Other
+            explicit attachments, including images without a Content-ID and active
+            formats such as SVG, are not included in inlineParts.
+            The HTML viewer matches case-sensitive Content-IDs after stripping angle
+            brackets and percent-decoding cid references once. Duplicate IDs select
+            the first supported image in MIME order; repeated references reuse its
+            URL. Missing, malformed, or unsupported references render without a src.
+            Unsupported parts remain visible in metadata and the raw MIME download.
+          items:
+            allOf:
+              - $ref: '#/components/schemas/Attachment'
+              - type: object
+                required: [part]
+                properties:
+                  part:
+                    type: integer
+                    minimum: 0
+                  contentId:
+                    type: string
+                    description: Content-ID without enclosing angle brackets; omitted if absent.
+                  url:
+                    type: string
+                    description: Same-origin resource path for supported raster types; omitted otherwise. Contains no credentials. Authenticate the resource request separately.
         id:
           type: string
           pattern: '^[a-f0-9]{64}$'

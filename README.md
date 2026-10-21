@@ -44,7 +44,20 @@ deployment-tool tests, a typechecked Worker bundle, the actual local Workers
 email-to-inbox integration test, and mocked Terraform tests. The integration suite
 uses separate local state and tests reception, normalization, Bcc-style delivery,
 duplicate delivery, MIME/charset handling, attachments, EJS rendering, authentication,
-RSS, deletion, and expiry. It does not send live mail or apply infrastructure.
+RSS, deletion, and expiry. The suite does not send live mail or apply infrastructure.
+
+Browser regression tests are opt-in and do not run in CI or `make test`:
+
+```bash
+yarn exec playwright install chromium
+yarn test:browser
+```
+
+This runs the local integration suite with additional Chromium checks for inline
+CID images (including a 3 MiB PNG), sandbox isolation against synthetic hostile
+HTML, and external links opening without an opener or referrer. On Linux hosts
+missing browser system libraries, install them with
+`yarn exec playwright install --with-deps chromium`.
 
 Use `make` to list commands. Yarn entry points include `yarn dev`, `yarn build`,
 `yarn test`, `yarn deploy`, `yarn config`, and `yarn infra`.

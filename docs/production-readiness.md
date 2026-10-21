@@ -6,9 +6,21 @@ HTTPS and SMTP checks on the configured domain.
 
 ## Application and domain security
 
-- **Email HTML isolation.** The viewer uses an unsandboxed `srcdoc` iframe.
-  Attribute escaping does not sanitize that document. Implement content isolation
-  and browser-level regression tests before exposing untrusted email publicly.
+- **Email HTML isolation.** The viewer sanitizes HTML and uses an opaque-origin
+  sandboxed iframe with a restrictive document CSP. Scripts, forms, nested
+  frames, SVG, sender CSS, and remote images are removed. Only supported CID raster
+  images receive authenticated same-origin URLs. Opt-in local Chromium regression
+  coverage (`yarn test:browser`, excluded from CI) verifies isolation and
+  multi-megabyte image decoding. The frame scrolls rather
+  than allowing parent DOM access for automatic height measurement. API `body`
+  remains untrusted original parsed HTML; consumers must isolate it themselves.
+  Resource URLs in the viewer carry the instance token because opaque frames
+  cannot rely on SameSite cookies. They are not public URLs; each request checks
+  authentication and unexpired inbox membership. Do not log query credentials.
+  Sanitized links use `target="_blank"` and `rel="noopener noreferrer"`.
+  Only `allow-popups allow-popups-to-escape-sandbox` are granted: clicked
+  destinations can run normally in separate tabs, without an opener or referrer.
+  Email scripts, same-origin access, and top-level navigation remain disabled.
 - **DMARC policy.** Terraform publishes `p=reject; sp=reject`. Configure aligned
   authentication before using the domain with legitimate outbound senders, and
   choose a monitored reporting destination if aggregate reports are needed.

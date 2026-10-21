@@ -11,6 +11,7 @@ import {
   buildDownloadEmailValidationChain,
   buildInboxValidationChain,
   buildIndexValidationChain,
+  buildInlineImageValidationChain,
   buildLatestEmailValidationChain,
   buildListEmailsValidationChain,
   buildListRssValidationChain,
@@ -106,6 +107,11 @@ export const createApp = (
     inboxController.downloadAttachment,
   );
   app.get('/inbox/:username/:id', ...buildShowEmailValidationChain(), inboxController.show);
+  app.get(
+    '/inbox/:username/:id/inline/:part',
+    ...buildInlineImageValidationChain(),
+    inboxController.inlineImage,
+  );
   app.get('/inbox/:username', ...buildListEmailsValidationChain(), inboxController.list);
   app.get('/inbox', ...buildInboxValidationChain(), inboxController.inbox);
 
