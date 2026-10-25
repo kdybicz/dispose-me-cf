@@ -38,7 +38,12 @@ HTTPS and SMTP checks on the configured domain.
 ## Operational checks
 
 - Define recovery for separate R2/D1 ingestion writes and verify SMTP retry behavior.
-- Measure CPU/memory for large MIME messages, attachments, and multi-message RSS.
+- RSS loads messages sequentially, retains only bounded feed-item data, and rejects
+  over-budget feeds explicitly (25 MiB cumulative MIME, 1 MiB item data, 2 MiB XML).
+  Raw MIME downloads stream with backpressure and cancellation. Measure CPU/memory
+  for single-message parsing and concurrent requests: image and attachment requests
+  still fetch and parse the complete MIME message. RSS limits do not bound total
+  isolate memory or guarantee every 25 MiB message can be parsed within it.
 - Verify logical expiry, bounded D1 cleanup, and asynchronous R2 lifecycle deletion.
 - Back up R2 Terraform state privately; the state bucket must have no email-expiry policy.
 - Use the verified R2 lockfile backend and serialize full deployment workflows per environment.

@@ -123,6 +123,13 @@ not `.dev.vars`. Terraform outputs generate `wrangler.deploy.json`; the checked-
 Cloudflare's inbound size limit is 25 MiB. Message parsing and repeated RSS parsing
 also consume Worker CPU/memory; size limits alone are not a resource guarantee.
 
+RSS reads the newest 10 messages sequentially. Each feed request is limited to
+25 MiB of cumulative raw MIME reads, 1 MiB of serialized feed-item data, and 2 MiB
+of RSS output (all UTF-8 byte counts for text). A feed exceeding a limit returns
+HTTP 413 instead of silently omitting or truncating content. Full messages remain
+available through the inbox and download endpoints. Raw `.eml` downloads stream
+directly from R2 with backpressure and cancellation on client disconnect.
+
 ## API and production readiness
 
 The [OpenAPI schema](docs/schema.yaml) documents inbox endpoints. Pass `type=json`

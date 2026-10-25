@@ -334,7 +334,12 @@ paths:
   /inbox/{username}/{id}/download:
     get:
       summary: Download an email as an `.eml` file
-      description: Download the full email as a standard `.eml` file.
+      description: |
+        Download the full email as a standard `.eml` file, preserving the stored MIME
+        bytes exactly. After authentication and unexpired inbox membership checks,
+        the R2 body is streamed with backpressure rather than buffered or parsed.
+        Client disconnection cancels the stream. Workers controls transfer framing;
+        Content-Length may be absent for streamed responses.
       operationId: downloadEmailAsEml
       tags:
         - Inbox
@@ -399,6 +404,55 @@ paths:
         - api_token_header: []
         - api_token_query: []
         - api_token_cookie: []
+
+  /inbox/{username}/feed/:
+    get:
+      summary: Read the latest inbox messages as RSS
+      description: |
+        Includes the latest 10 unexpired messages in inbox order. Messages are
+        loaded and parsed sequentially, retaining only feed items, not raw MIME or
+        decoded attachments. Per-request limits are 25 MiB (26214400 bytes) of
+        cumulative raw MIME reads, 1 MiB (1048576 bytes) of cumulative UTF-8 JSON
+        serialized feed-item data, and 2 MiB (2097152 bytes) of UTF-8 RSS output.
+        The raw read limit is checked against R2 object size before buffering each
+        message. Exceeding any limit returns 413 for the whole feed; messages and
+        bodies are never silently skipped or truncated. Use the inbox, message,
+        and download endpoints for full content when the RSS budget is exceeded.
+      operationId: getInboxFeed
+      tags: [Inbox]
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: x-api-key
+          in: query
+          required: true
+          description: Instance access token; this route requires the query parameter.
+          schema:
+            type: string
+            minLength: 20
+            maxLength: 50
+      responses:
+        '200':
+          description: Complete RSS feed for the latest 10 messages, or an empty feed.
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+        '403':
+          description: Missing or invalid instance access token.
+        '413':
+          description: RSS resource budget exceeded. No partial feed is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid or reserved username, or missing/invalid query token.
+      security:
+        - api_token_query: []
 
   /inbox/{username}/latest:
     get:

@@ -141,6 +141,8 @@ try {
   const attachment = await request(`/inbox/inboxsmoke/${id}/attachment?filename=hello.bin`);
   assert.deepEqual(Buffer.from(await attachment.arrayBuffer()), Buffer.from([0, 1, 2, 255, 254]));
   assert.equal((await request(`/inbox/unrelated/${id}?type=json`)).status, 404);
+  assert.equal((await request(`/inbox/unrelated/${id}/download?type=json`)).status, 404);
+  assert.equal((await request(`/inbox/admin/${id}/download?type=json`)).status, 422);
   assert.ok(
     (await (await request(`/inbox/inboxsmoke/feed/?x-api-key=${token}`)).text()).includes('<rss'),
   );
@@ -205,7 +207,9 @@ try {
   assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(image.headers.get('referrer-policy'), 'no-referrer');
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), largePng);
-  assert.equal(await (await request(`${inlineBase}/download`)).text(), inlineMessage);
+  const rawDownload = await request(`${inlineBase}/download`);
+  // Workers controls framing and may omit Content-Length for streamed Node responses.
+  assert.equal(await rawDownload.text(), inlineMessage);
   assert.deepEqual(
     Buffer.from(
       await (await request(`${inlineBase}/attachment?filename=fixture.bin`)).arrayBuffer(),
@@ -366,6 +370,7 @@ try {
   assert.ok((await invalidRecipient.text()).includes('Recipient is not allowed'));
   assert.equal((await request(`/inbox/inboxsmoke/${id}/delete`, { method: 'DELETE' })).status, 204);
   assert.equal((await request(`/inbox/inboxsmoke/${id}?type=json`)).status, 404);
+  assert.equal((await request(`/inbox/inboxsmoke/${id}/download?type=json`)).status, 404);
   assert.equal((await request(`/inbox/otherinbox/${id}?type=json`)).status, 200);
   const legacyMessage = Buffer.concat([
     Buffer.from(
@@ -391,6 +396,7 @@ try {
     "UPDATE messages SET ExpireAt = 1 WHERE Username IN ('otherinbox', 'inlineother')",
   );
   assert.equal((await request(`/inbox/otherinbox/${id}?type=json`)).status, 404);
+  assert.equal((await request(`/inbox/otherinbox/${id}/download?type=json`)).status, 404);
   assert.equal((await request(`/inbox/inlineother/${inlineId}/inline/0`)).status, 404);
   assert.equal((await (await request('/inbox/otherinbox?type=json')).json()).emails.length, 0);
   assert.equal((await fetch(`${base}/cdn-cgi/handler/scheduled`)).status, 200);
@@ -416,6 +422,29 @@ try {
     remaining[0].results[0].count,
     0,
     'Blacklist, deletion, and cron should leave no rows',
+  );
+  const largeFeedMessage = [
+    'From: sender@example.net',
+    'To: rsslimit@example.com',
+    'Message-ID: <rss-limit-fixture@example.net>',
+    'Subject: RSS resource limit',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'x'.repeat(1024 * 1024 + 1),
+  ].join('\r\n');
+  assert.equal((await deliver('rsslimit@example.com', largeFeedMessage)).status, 200);
+  const limitedFeed = await request(`/inbox/rsslimit/feed/?x-api-key=${token}`);
+  assert.equal(limitedFeed.status, 413);
+  assert.ok((await limitedFeed.json()).message.includes('RSS resource limit exceeded'));
+  const feedList = await (await request('/inbox/rsslimit?type=json')).json();
+  const feedId = feedList.emails[0].id;
+  assert.equal(
+    await (await request(`/inbox/rsslimit/${feedId}/download`)).text(),
+    largeFeedMessage,
+  );
+  assert.equal(
+    (await request(`/inbox/rsslimit/${feedId}/delete`, { method: 'DELETE' })).status,
+    204,
   );
   process.stdout.write('Cloudflare local smoke test passed.\n');
 } finally {
