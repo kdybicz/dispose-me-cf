@@ -160,7 +160,11 @@ paths:
         Supports image/png, image/jpeg, image/gif, image/webp, and image/avif only.
         SVG and other active formats are not served. No additional image byte-size
         or part-count cap is imposed; Workers memory/CPU and Email Routing limits
-        still apply. Each resource request reparses the stored raw message.
+        still apply. Ready messages stream the selected decoded object without
+        reparsing raw MIME or loading the message body. Existing messages without
+        derived data convert lazily on first authorized access; incomplete
+        conversions are never published. Authentication and inbox membership are
+        checked on every request, including cached resources.
         Responses use no-store, nosniff, inline disposition, sandbox CSP, and
         no-referrer. CORP permits embedding in the opaque-origin sandbox but does
         not bypass authentication or grant CORS access.
@@ -210,6 +214,8 @@ paths:
       summary: Download a specific attachment from an email
       description: |
         Download an attachment from the specified email.
+        Ready messages stream the selected private decoded object without loading
+        the message body or reparsing MIME. Older messages convert lazily first.
         The `Content-Type` header will match the attachment's MIME type (e.g., `image/png`, `application/pdf`, etc.).
         The `Content-Disposition` header is set for proper file downloads.
       operationId: downloadEmailAttachment
@@ -410,12 +416,13 @@ paths:
       summary: Read the latest inbox messages as RSS
       description: |
         Includes the latest 10 unexpired messages in inbox order. Messages are
-        loaded and parsed sequentially, retaining only feed items, not raw MIME or
-        decoded attachments. Per-request limits are 25 MiB (26214400 bytes) of
-        cumulative raw MIME reads, 1 MiB (1048576 bytes) of cumulative UTF-8 JSON
+        loaded sequentially from private parsed storage, retaining only feed items,
+        not raw MIME or decoded attachments. Existing messages convert lazily if
+        needed. Per-request limits are 25 MiB (26214400 bytes) of cumulative source
+        MIME sizes (also accounted on warm reads), 1 MiB (1048576 bytes) of cumulative UTF-8 JSON
         serialized feed-item data, and 2 MiB (2097152 bytes) of UTF-8 RSS output.
-        The raw read limit is checked against R2 object size before buffering each
-        message. Exceeding any limit returns 413 for the whole feed; messages and
+        The source-size limit is checked before buffering raw MIME on a cold read
+        or loading the decoded body on a warm read. Exceeding any limit returns 413 for the whole feed; messages and
         bodies are never silently skipped or truncated. Use the inbox, message,
         and download endpoints for full content when the RSS budget is exceeded.
       operationId: getInboxFeed

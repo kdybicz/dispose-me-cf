@@ -6,7 +6,7 @@ import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH } from '../service/tools/const
 import log from '../service/tools/log';
 import { normalizeUsername } from '../service/tools/utils';
 import { EmailDatabase } from './EmailDatabase';
-import { EmailParser } from './EmailParser';
+import { createEmailStore } from './EmailStore';
 import type { Env } from './env';
 
 export const receiveEmail = async (message: ForwardableEmailMessage, env: Env): Promise<void> => {
@@ -35,15 +35,14 @@ export const receiveEmail = async (message: ForwardableEmailMessage, env: Env): 
   }
 
   try {
+    const receivedAt = Math.floor(Date.now() / 1000);
     const raw = await new Response(message.raw as ReadableStream<Uint8Array>).arrayBuffer();
     const digest = await crypto.subtle.digest('SHA-256', raw);
     const id = Array.from(new Uint8Array(digest), (byte) =>
       byte.toString(16).padStart(2, '0'),
     ).join('');
-    const email = await new EmailParser().parseEmail(Buffer.from(raw));
-    const receivedAt = Math.floor(Date.now() / 1000);
-    // Identical MIME content shares one object across envelope-recipient deliveries.
-    await env.EMAILS.put(id, raw, { httpMetadata: { contentType: 'message/rfc822' } });
+    const email = await createEmailStore(env).receive(id, Buffer.from(raw));
+    // Identical MIME content and its derived parts are shared across recipients.
     await new EmailDatabase(env.DB).store({
       Id: id,
       Username: username,

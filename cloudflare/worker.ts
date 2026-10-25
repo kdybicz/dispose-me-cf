@@ -9,7 +9,7 @@ import { InboxController } from '../service/api/InboxController';
 import { getToken } from '../service/tools/utils';
 import { buildRememberBodyValidator } from '../service/tools/validators';
 import { EmailDatabase } from './EmailDatabase';
-import { EmailParser } from './EmailParser';
+import { createEmailStore } from './EmailStore';
 import { receiveEmail } from './email';
 import type { Env } from './env';
 import { R2FileSystem } from './R2FileSystem';
@@ -30,7 +30,7 @@ const isTokenValid = (token: string | null): boolean => {
 
 const controller = new InboxController({
   emailDatabase: new EmailDatabase(bindings.DB),
-  emailParser: new EmailParser(),
+  emailStore: createEmailStore(bindings),
   fileSystem: new R2FileSystem(bindings.EMAILS),
 });
 const app = createApp(
@@ -70,6 +70,7 @@ export const worker = {
   fetch: http.fetch,
   email: (message: ForwardableEmailMessage, env: Env): Promise<void> => receiveEmail(message, env),
   scheduled: async (_event: unknown, env: Env): Promise<void> => {
+    await createEmailStore(env).cleanupExpired();
     await new EmailDatabase(env.DB).deleteExpired();
   },
 };

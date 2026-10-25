@@ -10,9 +10,35 @@ const base = 'http://127.0.0.1:8788';
 const state = '.wrangler/integration';
 const command = (...args) =>
   execFileSync(process.execPath, [wrangler, ...args, '--persist-to', state], { stdio: 'inherit' });
+const query = (sql) =>
+  JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        wrangler,
+        'd1',
+        'execute',
+        'DB',
+        '--local',
+        '--persist-to',
+        state,
+        '--json',
+        '--command',
+        sql,
+      ],
+      { encoding: 'utf8' },
+    ),
+  )[0].results;
 command('d1', 'migrations', 'apply', 'DB', '--local');
 // This database belongs only to the smoke test, including interrupted runs.
-command('d1', 'execute', 'DB', '--local', '--command', 'DELETE FROM messages');
+command(
+  'd1',
+  'execute',
+  'DB',
+  '--local',
+  '--command',
+  'DELETE FROM messages; UPDATE email_derivatives SET ExpireAt = 1',
+);
 const server = spawn(
   process.execPath,
   [
@@ -93,6 +119,7 @@ try {
     await delay(500);
   }
   assert.ok(ready, 'Local Worker did not start');
+  assert.equal((await fetch(`${base}/cdn-cgi/handler/scheduled`)).status, 200);
   assert.equal((await fetch(`${base}/inbox?type=json`)).status, 403);
   assert.equal(
     (await request('/inbox?type=json', { headers: { 'x-api-key': 'incorrect' } })).status,
@@ -124,6 +151,12 @@ try {
   assert.equal(list.emails.length, 1, 'Repeated delivery should be idempotent');
   assert.equal(list.emails[0].hasAttachments, true);
   const id = list.emails[0].id;
+  assert.equal(
+    query(`SELECT COUNT(*) AS count FROM email_derivatives WHERE Id = '${id}' AND Ready = 1`)[0]
+      .count,
+    1,
+    'Repeated envelope deliveries should reuse one published generation',
+  );
   const other = await (await request('/inbox/otherinbox?type=json')).json();
   assert.equal(other.emails[0].id, id, 'Recipient deliveries should share their raw email');
   const visible = await (await request('/inbox/visible?type=json')).json();
@@ -383,8 +416,27 @@ try {
   assert.equal((await deliver('otherinbox@example.com', legacyMessage)).status, 200);
   const legacyList = await (await request('/inbox/otherinbox?type=json')).json();
   const legacyId = legacyList.emails.find((email) => email.subject === 'Charset test').id;
+  // Simulate an existing message without a published parsed representation.
+  command(
+    'd1',
+    'execute',
+    'DB',
+    '--local',
+    '--command',
+    `UPDATE email_derivatives SET Ready = 0 WHERE Id = '${legacyId}'`,
+  );
   const legacyDetails = await (await request(`/inbox/otherinbox/${legacyId}?type=json`)).json();
   assert.equal(legacyDetails.email.body, 'café\n');
+  assert.equal(
+    query(`SELECT COUNT(*) AS count FROM email_derivatives WHERE Id = '${legacyId}'`)[0].count,
+    2,
+  );
+  assert.equal(
+    query(
+      `SELECT COUNT(*) AS count FROM email_derivatives WHERE Id = '${legacyId}' AND Ready = 1`,
+    )[0].count,
+    1,
+  );
   const legacyDownload = await request(`/inbox/otherinbox/${legacyId}/download`);
   assert.deepEqual(Buffer.from(await legacyDownload.arrayBuffer()), legacyMessage);
   command(
@@ -393,13 +445,21 @@ try {
     'DB',
     '--local',
     '--command',
-    "UPDATE messages SET ExpireAt = 1 WHERE Username IN ('otherinbox', 'inlineother')",
+    "UPDATE messages SET ExpireAt = 1 WHERE Username IN ('otherinbox', 'inlineother'); " +
+      `UPDATE email_derivatives SET ExpireAt = 1 WHERE Id IN ('${id}', '${inlineId}', '${legacyId}')`,
   );
   assert.equal((await request(`/inbox/otherinbox/${id}?type=json`)).status, 404);
   assert.equal((await request(`/inbox/otherinbox/${id}/download?type=json`)).status, 404);
   assert.equal((await request(`/inbox/inlineother/${inlineId}/inline/0`)).status, 404);
   assert.equal((await (await request('/inbox/otherinbox?type=json')).json()).emails.length, 0);
   assert.equal((await fetch(`${base}/cdn-cgi/handler/scheduled`)).status, 200);
+  assert.equal(
+    query(
+      `SELECT COUNT(*) AS count FROM email_derivatives WHERE Id IN ('${id}', '${inlineId}', '${legacyId}')`,
+    )[0].count,
+    0,
+    'Cleanup removes expired published and failed generations',
+  );
   const remaining = JSON.parse(
     execFileSync(
       process.execPath,
