@@ -6,11 +6,11 @@ import type { Request, Response } from 'express';
 import { matchedData, type ValidationError, validationResult } from 'express-validator';
 import type { EmailDatabase } from '../../cloudflare/EmailDatabase';
 import {
-  type EmailParser,
   type InlinePartDetails,
   isInlineImageType,
   type ParsedEmail,
 } from '../../cloudflare/EmailParser';
+import type { EmailStore } from '../../cloudflare/EmailStore';
 import { EmailReadLimitError, type R2FileSystem } from '../../cloudflare/R2FileSystem';
 import { getCookieMaxAgeMs } from '../tools/config';
 import { AUTH_COOKIE_KEY, AUTH_QUERY_KEY, REMEMBER_COOKIE_KEY } from '../tools/const';
@@ -71,18 +71,18 @@ export type EmailDetails = ParsedEmail & {
 
 export interface InboxDependencies {
   emailDatabase: Pick<EmailDatabase, 'list' | 'exists' | 'delete'>;
-  emailParser: Pick<EmailParser, 'parseEmail'>;
-  fileSystem: Pick<R2FileSystem, 'getObject' | 'getObjectStream'>;
+  emailStore: Pick<EmailStore, 'getEmail' | 'getInlineImage' | 'getAttachment'>;
+  fileSystem: Pick<R2FileSystem, 'getObjectStream'>;
 }
 
 export class InboxController {
   protected emailDatabase: InboxDependencies['emailDatabase'];
-  protected emailParser: InboxDependencies['emailParser'];
+  protected emailStore: InboxDependencies['emailStore'];
   protected fileSystem: InboxDependencies['fileSystem'];
 
   constructor(dependencies: InboxDependencies) {
     this.emailDatabase = dependencies.emailDatabase;
-    this.emailParser = dependencies.emailParser;
+    this.emailStore = dependencies.emailStore;
     this.fileSystem = dependencies.fileSystem;
   }
 
@@ -118,9 +118,8 @@ export class InboxController {
     if (!(await this.emailDatabase.exists(normalizeUsername(username), id))) {
       return this.render404Response(req, res);
     }
-    const email = await this.emailParser.parseEmail(await this.fileSystem.getObject(id));
-    const image = email.inlineParts.find((image) => image.part === part);
-    if (!image || !isInlineImageType(image.contentType)) {
+    const image = await this.emailStore.getInlineImage(id, part);
+    if (!image) {
       return this.render404Response(req, res);
     }
     res.set({
@@ -132,7 +131,10 @@ export class InboxController {
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',
     });
-    return res.type(image.contentType).send(image.content);
+    res.type(image.contentType);
+    res.set('Content-Length', String(image.size));
+    await pipeline(image.body, res);
+    return;
   };
 
   index = async (req: InboxRequest, res: Response): InboxResponse => {
@@ -212,14 +214,8 @@ export class InboxController {
     const normalizedUsername = normalizeUsername(username);
     const existsForUser = await this.emailDatabase.exists(normalizedUsername, id);
     if (existsForUser) {
-      const emailBody = await this.fileSystem.getObject(id);
-
-      if (!emailBody) {
-        return this.render500Response(new Error('Email content not found!'), req, res);
-      }
-
-      const parsedEmail = await this.emailParser.parseEmail(emailBody);
-      email = this.presentEmail(parsedEmail, id, normalizedUsername);
+      const stored = await this.emailStore.getEmail(id);
+      email = this.presentEmail(stored.email, id, normalizedUsername);
 
       if (type === 'html') {
         const token = getToken(req);
@@ -282,16 +278,7 @@ export class InboxController {
     const normalizedUsername = normalizeUsername(username);
     const existsForUser = await this.emailDatabase.exists(normalizedUsername, id);
     if (existsForUser) {
-      const emailBody = await this.fileSystem.getObject(id);
-
-      if (!emailBody) {
-        return this.render500Response(new Error('Email content not found!'), req, res);
-      }
-
-      const parsedEmail = await this.emailParser.parseEmail(emailBody);
-      const attachment = parsedEmail.attachments.find(
-        (attachment) => attachment.filename === filename,
-      );
+      const attachment = await this.emailStore.getAttachment(id, filename);
 
       if (!attachment) {
         return this.render500Response(new Error('Email attachment not found!'), req, res);
@@ -300,7 +287,9 @@ export class InboxController {
       res.attachment(attachment.filename);
       res.type(attachment.contentType);
 
-      return res.send(attachment.content);
+      res.set('Content-Length', String(attachment.size));
+      await pipeline(attachment.body, res);
+      return;
     }
 
     return this.render404Response(req, res);
@@ -355,12 +344,8 @@ export class InboxController {
     const latestEmail = await this.emailDatabase.list(normalizedUsername, sentAfter, 1);
     if (latestEmail.Items && latestEmail.Items.length > 0) {
       const messageId = latestEmail.Items[0].Id;
-      const emailBody = await this.fileSystem.getObject(messageId);
-
-      if (emailBody) {
-        const parsedEmail = await this.emailParser.parseEmail(emailBody);
-        email = this.presentEmail(parsedEmail, messageId, normalizedUsername);
-      }
+      const stored = await this.emailStore.getEmail(messageId);
+      email = this.presentEmail(stored.email, messageId, normalizedUsername);
     }
 
     if (type === 'html') {
@@ -447,11 +432,10 @@ export class InboxController {
         normalizedUsername,
         token,
         async (id, maxBytes) => {
-          const raw = await this.fileSystem.getObject(id, maxBytes);
-          const parsed = await this.emailParser.parseEmail(raw);
+          const { email, rawBytes } = await this.emailStore.getEmail(id, maxBytes);
           return {
-            rawBytes: raw.byteLength,
-            item: mapEmailDetailsToFeedItem({ ...parsed, id }, normalizedUsername, token),
+            rawBytes,
+            item: mapEmailDetailsToFeedItem({ ...email, id }, normalizedUsername, token),
           };
         },
       );

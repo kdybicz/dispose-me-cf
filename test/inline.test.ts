@@ -58,7 +58,7 @@ test('resource errors do not log query credentials', (context) => {
   const debug = context.mock.method(log, 'debug', () => {});
   const controller = new InboxController({
     emailDatabase: {} as never,
-    emailParser: new EmailParser(),
+    emailStore: {} as never,
     fileSystem: {} as never,
   });
   const req = {

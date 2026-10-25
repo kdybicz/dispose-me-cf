@@ -120,11 +120,15 @@ not `.dev.vars`. Terraform outputs generate `wrangler.deploy.json`; the checked-
   private destination enables Terraform-managed forwarding for every configured
   reserved alias. Without it, reserved mail is rejected. See the deployment guide.
 
-Cloudflare's inbound size limit is 25 MiB. Message parsing and repeated RSS parsing
-also consume Worker CPU/memory; size limits alone are not a resource guarantee.
+Cloudflare's inbound size limit is 25 MiB. Initial MIME conversion still consumes
+Worker CPU/memory; size limits alone are not a resource guarantee. New messages
+store a private parsed manifest, body, and decoded parts alongside the original
+MIME. Existing messages convert lazily on first authorized access. Subsequent
+views and image/attachment requests reuse these objects without reparsing MIME.
+See [parsed email storage](docs/email-storage.md) for retry, migration, and retention details.
 
 RSS reads the newest 10 messages sequentially. Each feed request is limited to
-25 MiB of cumulative raw MIME reads, 1 MiB of serialized feed-item data, and 2 MiB
+25 MiB of cumulative source MIME sizes, 1 MiB of serialized feed-item data, and 2 MiB
 of RSS output (all UTF-8 byte counts for text). A feed exceeding a limit returns
 HTTP 413 instead of silently omitting or truncating content. Full messages remain
 available through the inbox and download endpoints. Raw `.eml` downloads stream

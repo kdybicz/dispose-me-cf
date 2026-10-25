@@ -42,16 +42,21 @@ export const normalizeContentId = (value: string): string => {
 export const isInlineImageType = (contentType: string): boolean =>
   ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(contentType);
 
+export const restoreEmailAddress = (address: Omit<EmailAddress, 'format'>): EmailAddress => ({
+  ...address,
+  format: () =>
+    address.displayName ? `${address.displayName} <${address.address}>` : address.address,
+});
+
 const mapAddress = (address: Address): EmailAddress => {
   const value = address.address ?? '';
   const separator = value.lastIndexOf('@');
-  return {
+  return restoreEmailAddress({
     address: value,
     user: separator < 0 ? null : value.slice(0, separator),
     host: separator < 0 ? null : value.slice(separator + 1).toLowerCase(),
     displayName: address.name ?? '',
-    format: () => (address.name ? `${address.name} <${value}>` : value),
-  };
+  });
 };
 
 export class EmailParser {
