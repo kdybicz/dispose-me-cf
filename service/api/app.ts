@@ -119,8 +119,12 @@ export const createApp = (
     inboxController.render404Response(req, res);
   });
 
-  app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
+  app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     log.error('Error while processing request', err);
+    if (res.headersSent || res.destroyed) {
+      next(err);
+      return;
+    }
     inboxController.render500Response(err, req, res);
   });
 

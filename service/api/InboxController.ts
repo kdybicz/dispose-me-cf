@@ -1,4 +1,4 @@
-import type { Buffer } from 'node:buffer';
+import { pipeline } from 'node:stream/promises';
 
 import dayjs = require('dayjs');
 
@@ -11,10 +11,16 @@ import {
   isInlineImageType,
   type ParsedEmail,
 } from '../../cloudflare/EmailParser';
+import { EmailReadLimitError, type R2FileSystem } from '../../cloudflare/R2FileSystem';
 import { getCookieMaxAgeMs } from '../tools/config';
 import { AUTH_COOKIE_KEY, AUTH_QUERY_KEY, REMEMBER_COOKIE_KEY } from '../tools/const';
 import { renderEmailBody } from '../tools/emailBody';
-import { mapEmailDetailsListToFeed } from '../tools/feed';
+import {
+  buildEmailFeed,
+  FeedResourceLimitError,
+  mapEmailDetailsToFeedItem,
+  RSS_LIMIT_MESSAGE,
+} from '../tools/feed';
 import log from '../tools/log';
 import { getCookie, getToken, normalizeUsername } from '../tools/utils';
 import { TYPE_DEFAULT } from '../tools/validators';
@@ -66,10 +72,7 @@ export type EmailDetails = ParsedEmail & {
 export interface InboxDependencies {
   emailDatabase: Pick<EmailDatabase, 'list' | 'exists' | 'delete'>;
   emailParser: Pick<EmailParser, 'parseEmail'>;
-  fileSystem: {
-    getObject(id: string): Promise<Buffer>;
-    getObjects(ids: string[]): Promise<Buffer[]>;
-  };
+  fileSystem: Pick<R2FileSystem, 'getObject' | 'getObjectStream'>;
 }
 
 export class InboxController {
@@ -246,16 +249,12 @@ export class InboxController {
     const normalizedUsername = normalizeUsername(username);
     const existsForUser = await this.emailDatabase.exists(normalizedUsername, id);
     if (existsForUser) {
-      const emailBody = await this.fileSystem.getObject(id);
-
-      if (!emailBody) {
-        return this.render500Response(new Error('Email content not found!'), req, res);
-      }
-
+      const object = await this.fileSystem.getObjectStream(id);
       res.attachment(`${id}.eml`);
       res.type('application/octet-stream');
-
-      return res.send(emailBody);
+      res.set('Content-Length', String(object.size));
+      await pipeline(object.body, res);
+      return;
     }
 
     return this.render404Response(req, res);
@@ -441,32 +440,28 @@ export class InboxController {
     const emailList = await this.emailDatabase.list(normalizedUsername);
 
     const emailNamesList = emailList.Items?.map((item) => item.Id) ?? [];
-    const emailBodies = await this.fileSystem.getObjects(emailNamesList);
-    const emails = await Promise.all(
-      emailBodies.map(async (emailBody, idx) => {
-        if (emailBody) {
-          const parsedEmail = await this.emailParser.parseEmail(emailBody);
-          if (parsedEmail) {
-            return {
-              ...parsedEmail,
-              id: emailNamesList[idx],
-            };
-          }
-        }
-        return null;
-      }),
-    );
-
     const token = getToken(req) as string;
-
-    const feed = mapEmailDetailsListToFeed(
-      emails.filter((email) => email != null),
-      normalizedUsername,
-      token,
-    );
-
-    res.type('application/rss+xml');
-    return res.send(feed.rss2());
+    try {
+      const xml = await buildEmailFeed(
+        emailNamesList,
+        normalizedUsername,
+        token,
+        async (id, maxBytes) => {
+          const raw = await this.fileSystem.getObject(id, maxBytes);
+          const parsed = await this.emailParser.parseEmail(raw);
+          return {
+            rawBytes: raw.byteLength,
+            item: mapEmailDetailsToFeedItem({ ...parsed, id }, normalizedUsername, token),
+          };
+        },
+      );
+      return res.type('application/rss+xml').send(xml);
+    } catch (error) {
+      if (error instanceof EmailReadLimitError || error instanceof FeedResourceLimitError) {
+        return res.status(413).json({ message: RSS_LIMIT_MESSAGE });
+      }
+      throw error;
+    }
   };
 
   render403Response = (req: Request, res: Response): void => {
