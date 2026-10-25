@@ -23,5 +23,8 @@
   }],
   "r2_buckets": [{ "binding": "EMAILS", "bucket_name": "dispose-me-local-emails" }],
   "triggers": { "crons": ["*/10 * * * *"] },
-  "observability": { "enabled": true }
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true
+  }
 }

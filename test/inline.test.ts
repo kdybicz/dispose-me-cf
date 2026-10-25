@@ -53,9 +53,10 @@ test('resolves encoded and repeated CIDs to the first supported part and sanitiz
   assert.ok(body.length < 1000);
 });
 
-test('resource errors do not log query credentials', (context) => {
+test('debug and error response logs omit query credentials and authentication headers', (context) => {
   // given
   const debug = context.mock.method(log, 'debug', () => {});
+  const error = context.mock.method(log, 'error', () => {});
   const controller = new InboxController({
     emailDatabase: {} as never,
     emailStore: {} as never,
@@ -64,13 +65,31 @@ test('resource errors do not log query credentials', (context) => {
   const req = {
     params: { username: 'synthetic', id: 'abc', part: '99' },
     query: { type: 'json', 'x-api-key': 'secret-query-credential' },
+    headers: {
+      'x-api-key': 'secret-header-credential',
+      authorization: 'Bearer secret-authorization-credential',
+      cookie: 'x-api-key=secret-cookie-credential',
+    },
+    originalUrl: '/inbox/synthetic/abc?x-api-key=secret-query-credential&type=json',
   } as unknown as Request;
   const res = { status: () => res, json: () => res } as unknown as Response;
   // when
   controller.render404Response(req, res);
+  controller.render403Response(req, res);
+  controller.render422Response([], req, res);
+  controller.render500Response(new Error('Synthetic storage failure'), req, res);
   // then
-  assert.equal(debug.mock.calls.length, 1);
-  assert.ok(!JSON.stringify(debug.mock.calls).includes('secret-query-credential'));
+  assert.equal(debug.mock.calls.length, 3);
+  assert.equal(error.mock.calls.length, 1);
+  const output = JSON.stringify([...debug.mock.calls, ...error.mock.calls]);
+  for (const secret of [
+    'secret-query-credential',
+    'secret-header-credential',
+    'secret-authorization-credential',
+    'secret-cookie-credential',
+  ])
+    assert.ok(!output.includes(secret));
+  assert.ok(output.includes('Synthetic storage failure'));
 });
 
 test('opens allowed links without an opener or referrer and rejects executable link schemes', async () => {

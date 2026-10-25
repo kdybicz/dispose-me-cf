@@ -51,6 +51,8 @@ HTTPS and SMTP checks on the configured domain.
 - Back up R2 Terraform state privately; the state bucket must have no email-expiry policy.
 - Use the verified R2 lockfile backend and serialize full deployment workflows per environment.
 - Keep credentials out of logs, generated configuration, commits, and support output.
+  [Worker log redaction](log-redaction.md) must remain enabled across redeployments;
+  verify persisted platform invocation logs using synthetic query credentials.
 - Verify real SMTP delivery, including Bcc, multiple recipients, and private forwarding.
 
 Private access is enabled by default. It is one instance-level token, not a
