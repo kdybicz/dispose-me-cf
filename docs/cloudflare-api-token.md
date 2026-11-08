@@ -5,7 +5,7 @@ Terraform and Wrangler both read it from `CLOUDFLARE_API_TOKEN`.
 
 This guide covers the resources currently declared in `infra/cloudflare/` and
 the application deployment in `cloudflare/deployment.mjs`, using Cloudflare
-provider 5.27.0 and Wrangler 4.148.0. The permissions below cover provisioning,
+provider 5.28.1 and Wrangler 4.156.0. The permissions below cover provisioning,
 deployment, and optional domain administration.
 
 ## 1. Identify the account and domain
