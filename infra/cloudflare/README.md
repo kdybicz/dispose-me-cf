@@ -1,6 +1,6 @@
 # Cloudflare infrastructure and deployment
 
-Terraform 1.17.1 and Cloudflare provider 5.28.1 provision the service. Wrangler
+Terraform 1.13.3 and Cloudflare provider 5.27.0 provision the service. Wrangler
 builds and deploys its Worker.
 
 | Owner | Resources |
