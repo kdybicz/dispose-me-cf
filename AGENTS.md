@@ -2,7 +2,7 @@
 
 ## Overview
 
-Dispose Me - Cloudflare is a disposable email application using Node.js 24, Yarn 4.18.1, TypeScript, Express, EJS, Tailwind v4, Workers Email Routing, D1, R2, and Terraform 1.17.1. Preserve the MIT attribution. Email content and credentials are private: never commit tokens, live messages, Terraform state, backend credentials, or generated deployment configuration.
+Dispose Me - Cloudflare is a disposable email application using Node.js 24, Yarn 4.18.1, TypeScript, Express, EJS, Tailwind v4, Workers Email Routing, D1, R2, and Terraform 1.13.3. Preserve the MIT attribution. Email content and credentials are private: never commit tokens, live messages, Terraform state, backend credentials, or generated deployment configuration.
 
 ## Project structure
 

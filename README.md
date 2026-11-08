@@ -6,7 +6,7 @@ attachment downloads, private/public access, and automatic expiration.
 
 ## Local development
 
-Use Node.js 24, Yarn 4.18.1 via Corepack, and GNU Make. Install Terraform 1.17.1
+Use Node.js 24, Yarn 4.18.1 via Corepack, and GNU Make. Install Terraform 1.13.3
 to run the infrastructure checks. `.nvmrc` and `.terraform-version` select the
 supported tool versions.
 If your Node distribution does not include Corepack, install it with
