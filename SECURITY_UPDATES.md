@@ -248,19 +248,23 @@ An update is ready when:
 
 Recheck both tables at every monthly update.
 
+Latest monthly run: [November 2026](docs/security-updates-2026-11.md).
+
 ### Temporary resolutions and deferred advisories
 
-The entries below preserve the previous maintenance notes. Their advisory status and fix
-availability have not been revalidated as part of this documentation update.
+None as of 2026-11-08. Both recursive dependency audits report no findings. There are no
+security resolutions or age-gate preapprovals.
 
 | Advisory | Dependency path and exposure | Action or reason blocked | Removal/revisit condition |
 | --- | --- | --- | --- |
-| GHSA-wq5f-xc86-pv6w | `wrangler@4.148.0` → `miniflare@5.20261006.0-alpha` → `sharp@0.35.4`; local development tooling, not deployed Worker code. | Scoped resolution `miniflare@npm:5.20261006.0-alpha/sharp` selects compatible patch `0.35.5`. The previous note records publication on 2026-09-27 and age-gate eligibility. | Revalidate at the next dependency update. Remove when an eligible Wrangler/Miniflare release supplies the fix without the resolution. |
-| GHSA-vfj7-8cjw-p6xm (high) | `@parcel/watcher@2.5.1` → `micromatch@4.0.8` → `braces@3.0.3`; build/local tooling. | The 2026-10-18 audit note records fixed version `3.0.4`, but the registry returned E404. Keep the finding visible rather than inventing an incompatible pin. | Recheck the advisory, parent releases, and fixed-version availability at the next dependency update. Record a current maintainer decision if deferral is still needed. |
+
+The old sharp resolution was removed: Wrangler 4.156.0 supplies Miniflare
+5.20261023.3-beta, which pins fixed sharp 0.35.5. The historical braces advisory
+[GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) was withdrawn
+on 2026-10-23. The existing braces 3.0.3 path remains, but it is no longer an active finding.
 
 ### Held-back upgrades
 
 | Package/tool | Held version or major | Reason and issue/decision | Revisit condition |
 | --- | --- | --- | --- |
-
-No held-back upgrades are recorded yet.
+| TypeScript | Keep `~5.9.3`; latest stable checked: 7.0.2. | Trial upgrade failed `yarn typecheck` with TS5108: `esModuleInterop=false` has been removed. Restore 5.9.3 for this maintenance run; migrate compiler/configuration behavior separately rather than change it as part of dependency patching. | Revisit at the next monthly update or in a dedicated TypeScript migration; review the TypeScript 6/7 migration guides and rerun full verification. |
