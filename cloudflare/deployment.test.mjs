@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 import {
@@ -44,6 +45,27 @@ test('Terraform output replaces local resource IDs and keeps retention consisten
   assert.equal(config.r2_buckets[0].bucket_name, deployment.bucket_name);
   assert.equal(config.vars.APP_VERSION, base.vars.APP_VERSION);
   assert.equal(base.name, 'local-worker');
+});
+
+test('production configuration preserves query redaction and useful observability settings', async () => {
+  // given: use the checked-in configuration that normal deployments regenerate from.
+  const local = parseWranglerConfig(
+    await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'),
+  );
+  local.observability.logs = {
+    enabled: true,
+    invocation_logs: true,
+    persist: true,
+    head_sampling_rate: 0.25,
+  };
+  // when
+  const first = createDeploymentConfig(local, deployment);
+  const regenerated = createDeploymentConfig(local, deployment);
+  // then
+  assert.equal(first.observability.enabled, true);
+  assert.equal(first.observability.redact_query_string, true);
+  assert.deepEqual(first.observability.logs, local.observability.logs);
+  assert.deepEqual(regenerated.observability, first.observability);
 });
 
 test('configuration generation rejects placeholders and competing routing owners', () => {
